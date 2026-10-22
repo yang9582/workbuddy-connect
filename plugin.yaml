@@ -1,0 +1,73 @@
+name: workbuddy
+version: 1.0.0
+manifest_version: 2
+description: "WorkBuddy 桌面 App 的模型接入 Hermes：托管本地 OpenAI 兼容桥接、同步模型目录并注册 provider"
+author: Hermes Agent
+license: MIT
+tags: [workbuddy, provider, bridge, openai-compatible]
+
+provides_tools:
+  - workbuddy_status
+  - workbuddy_models
+  - workbuddy_sync
+
+provides_hooks:
+  - on_session_start
+
+config_schema:
+  autostart:
+    type: bool
+    default: true
+    label: 会话开始时确保桥接运行
+    description: 关闭后需要手动 `hermes workbuddy start`；模型调用前不会自动拉起
+  auto_sync:
+    type: bool
+    default: true
+    label: 模型目录变化时自动刷新 provider
+    description: 每轮会话开始比对模型目录哈希，变化时才重写配置
+  enable_cn:
+    type: bool
+    default: true
+    label: 启用国内版 WorkBuddy
+  enable_ai:
+    type: bool
+    default: true
+    label: 启用国际版 WorkBuddy AI
+  port_cn:
+    type: int
+    default: 39621
+    label: 国内版端口
+  port_ai:
+    type: int
+    default: 39622
+    label: 国际版端口
+  data_dir:
+    type: str
+    default: ""
+    label: 桥接数据目录
+    description: "留空 = %LOCALAPPDATA%\\hermes-workbuddy-bridge；配置（含本地令牌）、日志与模型缓存在这里"
+  node_path:
+    type: str
+    default: ""
+    label: node 路径
+    description: 留空自动探测（PATH、Hermes 自带的 node、Program Files）
+  electron_bin_cn:
+    type: str
+    default: ""
+    label: WorkBuddy.exe 路径
+    description: 解密桌面登录凭据用；留空则读 ~/.dsh/.env 的 WORKBUDDY_ELECTRON_BIN
+  electron_bin_ai:
+    type: str
+    default: ""
+    label: WorkBuddyAI.exe 路径
+    description: 解密桌面登录凭据用；留空则读 ~/.dsh/.env 的 WORKBUDDY_AI_ELECTRON_BIN
+  probe_models:
+    type: bool
+    default: true
+    label: 只写入当前账号真正可用的模型
+    description: 同步前用最小请求探测每个模型；上游返回 11158（账号无权使用）的模型不写入 provider，避免选中后 400。结果缓存 6 小时。
+  sync_profiles:
+    type: str
+    default: ""
+    label: 额外同步的 profile
+    description: "all、current 或逗号分隔的 profile 名；留空 = 仅当前 profile"

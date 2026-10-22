@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Node
+node_modules/.cache/
+
+# 运行时 / 编辑器
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
