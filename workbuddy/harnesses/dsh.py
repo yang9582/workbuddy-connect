@@ -42,9 +42,9 @@ class DshAdapter(HarnessAdapter):
 
     def status(self):
         info = super().status()
-        info["plugins"] = [
-            {"path": str(path), "version": self._version(path)} for path in self.plugin_dirs()
-        ]
+        plugins = [{"path": str(path), "version": self._version(path)} for path in self.plugin_dirs()]
+        info["plugins"] = plugins
+        info["configured"] = any(item["version"] == TARGET_VERSION for item in plugins)
         heartbeat = self.dsh_home / ".workbuddy-host-heartbeat.json"
         try:
             info["heartbeat"] = json.loads(heartbeat.read_text(encoding="utf-8"))

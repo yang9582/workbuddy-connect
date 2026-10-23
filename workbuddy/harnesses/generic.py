@@ -20,6 +20,11 @@ class GenericAdapter(HarnessAdapter):
     def endpoint_file(self) -> Path:
         return self.state_dir() / "endpoint.json"
 
+    def status(self):
+        info = super().status()
+        info.update({"config": str(self.endpoint_file), "configured": self.endpoint_file.is_file()})
+        return info
+
     def install(self, manager, *, profiles: str = "", dry_run: bool = False) -> List[str]:
         endpoint = self.endpoint(manager)
         payload = {
