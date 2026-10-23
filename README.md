@@ -125,6 +125,14 @@ hermes workbuddy doctor
   用 `vendor/dsh-workbuddy-connect/` 覆盖升级。
 - 升级后重启 DSH（`taskkill /F /IM "DeepSeek Harness.exe"` 后重新打开），
   `~/.dsh/.workbuddy-host-heartbeat.json` 的 `pluginVersion` 应为 0.7.9。
+- **国内版（CN）兼容补丁**（`install --harness dsh` 会自动应用，幂等）：
+  上游按**精确短语**拦截 agent harness 的 system prompt（`11128 请求被拦截`），
+  只替换已知句不够（提示词随会话增长还会命中别的短语）。补丁做三件事：
+  1. 把 DSH 固定开场句改成 `You are an AI agent running inside DeepSeek Harness.`；
+  2. 对 CN 分支的 system 内容做「代码块之外的双空格展开」——Markdown 渲染与语义
+     不变，但字节序列改变，精确指纹失配（实测同一 70KB 请求 11128 → 200）；
+  3. shim 层对 11128 做 3 次退避重试。
+  手工重打：`python scripts/patch_dsh_plugin.py --restore`（先从 vendor 还原再打补丁）。
 
 ### 豆包 / 其它
 - `python -m workbuddy.cli_main endpoint --show-token` 输出 base_url / api_key / 模型列表，
@@ -173,7 +181,7 @@ Hermes 内另有 `/workbuddy status|start|stop|sync|logs` 斜杠命令。
 
 | 现象 | 处理 |
 |---|---|
-| `11128 request illegal / unapproved channel` | 内核太旧或 prompt 指纹；确认 `bridge/vendor/host-bundle.js` 是 0.7.9+，Claude Code 用默认 `anthropicSystemMode=replace` |
+| `11128 request illegal / unapproved channel` | 内核太旧或 system prompt 命中上游精确指纹：确认 `bridge/vendor/host-bundle.js` 是 0.7.9+；Claude Code 用默认 `anthropicSystemMode=replace`；DSH 跑一遍 `install --harness dsh` 打 CN 补丁 |
 | `11158 not allowed for user type` | 该模型不在账号套餐内；`wbconnect sync --reprobe` 会剔除 |
 | `502 transport error: fetch failed` | 本机到 `www.workbuddy.ai` 不通（fake-IP 代理/DNS），与插件无关；恢复后 `wbconnect restart` |
 | Claude Code 报 unknown model | 适配器写入的是 `claude-sonnet-4-5` 等别名，桥接负责映射；重启 Claude Code 会话 |
