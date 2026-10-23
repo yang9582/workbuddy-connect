@@ -1,194 +1,212 @@
-# WorkBuddy → Hermes 插件
+# WorkBuddy Connect
 
-把本机 **WorkBuddy（国内版）** 和 **WorkBuddy AI（国际版）** 桌面应用的模型，以 OpenAI 兼容
-provider 的形式接入 [Hermes Agent](https://hermes-agent.nousresearch.com/docs)，
-并在桌面端展示积分与模型倍率。
+把本机 **WorkBuddy（国内版）** 与 **WorkBuddy AI（国际版）** 桌面应用的模型，接入多家
+agent harness：**Hermes Agent、Claude Code、Codex CLI、OpenClaw、DeepSeek Harness（DSH）**，
+以及任何支持「自定义 OpenAI 兼容端点」的产品（豆包等）。
 
-一个插件包同时提供三部分能力：
+一个仓库、一套桥接、多个安装适配器：
 
-| 部分 | 入口 | 作用 |
+| Harness | 接入方式 | 状态 |
 |---|---|---|
-| 后端桥接 | `bridge/server.mjs`（Node） | 复用 WorkBuddy 桌面登录态，在 `127.0.0.1` 暴露 `/healthz`、`/v1/models`、`/v1/credits`、`/v1/status`、`/v1/chat/completions`（SSE + 工具调用） |
-| Hermes 插件 | `plugin.yaml` + `__init__.py` | 3 个工具、`on_session_start` 钩子、`hermes workbuddy` CLI、`/workbuddy` 斜杠命令、provider 注册与模型权限探测 |
-| 桌面 UI | `desktop/plugin.js` | 状态栏积分徽章、模型菜单倍率、输入框模型 pill、设置页明细 |
+| **Hermes Agent** | 原生插件（3 个工具 + `on_session_start` + `/workbuddy`）+ 桌面 UI | ✅ 已验证 |
+| **Claude Code** | 桥接提供 Anthropic 兼容 `/v1/messages`；写入 `~/.claude/settings.json` 的 `ANTHROPIC_*` | ✅ 已验证（含工具调用） |
+| **Codex CLI** | 写入 `~/.codex/config.toml` 的 `model_providers.workbuddy` + `profiles.workbuddy` | ✅ 配置已验证 |
+| **OpenClaw** | 写入 `~/.openclaw/workbuddy-connect.json`（在其设置里添加 OpenAI 兼容 provider） | ⚠️ 半自动 |
+| **DeepSeek Harness** | 内置 `dsh-workbuddy-connect` 插件升级到 0.7.9 | ✅ 已验证 |
+| **豆包 / 其它** | `wbconnect endpoint` 输出 base_url / key / 模型列表，手填自定义模型 | ⚠️ 通用方案 |
 
 > 个人自用项目。桥接依赖 WorkBuddy 客户端的**非公开接口**，WorkBuddy 大版本更新后可能需要
 > 更新 `bridge/vendor/host-bundle.js`（见「维护」）。
 
 ---
 
-## 1. 数据流
+## 1. 结构
 
 ```
-Hermes (LLM 调用)
-  └─ provider: custom:workbuddy / custom:workbuddy-ai
-       └─ http://127.0.0.1:39621|39622/v1/chat/completions   ← 本地 Bearer 鉴权
-            └─ bridge (Node)：读取 WorkBuddy 桌面登录态（加密凭据，经 App 自带 Electron 解密）
-                 └─ copilot.tencent.com / www.workbuddy.ai 的 chat completions
-                      └─ SSE 流式返回，工具调用按 OpenAI 标准分片
+workbuddy-connect/
+├── plugin.yaml               # Hermes 清单（工具/钩子/设置 schema）
+├── __init__.py               # Hermes 入口：from .workbuddy.hermes_plugin import register
+├── workbuddy/
+│   ├── service.py            # 桥接进程管理：懒启动、健康检查、停止、模型权限探测
+│   ├── providers_sync.py     # 写 providers.* + .env 令牌（hermes config set）
+│   ├── tools.py / schemas.py # Hermes 工具（status / models / sync）
+│   ├── cli.py                # Hermes 内命令与 /workbuddy
+│   ├── hermes_plugin.py      # register(ctx) 装配
+│   ├── cli_main.py           # wbconnect 独立 CLI（跨 harness）
+│   └── harnesses/            # 各 harness 适配器
+│       ├── hermes.py  claude_code.py  codex.py  openclaw.py  dsh.py  generic.py
+├── bridge/                   # Node 桥接（OpenAI + Anthropic 双协议）
+│   ├── server.mjs
+│   ├── doctor.mjs
+│   ├── vendor/host-bundle.js # dsh-workbuddy-connect 0.7.9 内核（MIT）
+│   └── node_modules/@deepseek-ai/*   # 两个最小替身包
+├── desktop/plugin.js         # Hermes 桌面 UI（积分徽章 / 倍率 / pill / 设置页）
+├── vendor/dsh-workbuddy-connect/  # DSH 插件离线升级包（0.7.9）
+└── scripts/install.py / uninstall.py
 ```
 
-- **上游认证**：WorkBuddy 桌面 App 的登录态；令牌临近过期由内核自动刷新。
-- **本地认证**：每个桥接实例一份随机 Bearer 令牌（首次启动生成，存数据目录 `config*.json`）。
-- **Hermes 侧密钥**：`providers.*.api_key` 存 `${WORKBUDDY_BRIDGE_TOKEN}` / `${WORKBUDDY_AI_BRIDGE_TOKEN}`
-  占位符，真实令牌在**每个 profile 的 `.env`**，不落 `config.yaml`。
-- **模型权限**：同步前用最小请求探测每个模型；上游 `11158 not allowed for user type` 的模型
-  不写入 provider，避免选中后报 400。
-
-## 2. 目录结构
+## 2. 工作原理
 
 ```
-hermes-workbuddy/
-├── plugin.yaml            # 清单：工具、钩子、config_schema（桌面设置页据此渲染）
-├── __init__.py            # register(ctx)：只注册，零副作用
-├── service.py             # 进程/数据管理：懒启动、健康检查、停止、模型探测、旧目录迁移
-├── providers_sync.py      # provider 注册 + .env 令牌同步（hermes config set）
-├── tools.py               # 工具处理器（status / models / sync）
-├── schemas.py             # 工具 schema
-├── cli.py                 # hermes workbuddy ... 与 /workbuddy
-├── desktop/plugin.js      # 桌面 UI（状态栏积分 / 倍率 / pill / 设置页）
-├── bridge/                # Node 桥接载荷
-│   ├── server.mjs         # OpenAI 兼容服务
-│   ├── doctor.mjs         # 自检（凭据/登录态/模型/积分，不打印令牌）
-│   ├── lib/dsh-env.mjs    # 读取 ~/.dsh/.env 的 WORKBUDDY* 变量
-│   ├── vendor/host-bundle.js   # dsh-workbuddy-connect（MIT）宿主内核副本
-│   └── node_modules/@deepseek-ai/*  # 两个最小替身包（原子写 / home 路径）
-└── scripts/
-    ├── install.py         # 安装到 Hermes（默认 profile，可选全部 profile）
-    └── uninstall.py       # 停止、清理 provider、移除插件
+harness (Hermes / Claude Code / Codex / …)
+  └─ OpenAI /v1/chat/completions  或  Anthropic /v1/messages
+       └─ bridge (Node, 127.0.0.1:39621|39622)  ← 本地 Bearer 鉴权
+            └─ WorkBuddy 桌面登录态（加密凭据，经 App 自带 Electron 解密）
+                 └─ copilot.tencent.com / www.workbuddy.ai
 ```
 
-## 3. 安装
+- **上游认证**：WorkBuddy 桌面 App 的登录态；令牌临近过期自动刷新。
+- **本地认证**：每个实例一份随机 Bearer 令牌（首次启动生成，存数据目录 `config*.json`）。
+- **模型权限**：同步前用 `max_tokens=1` 探测；上游 `11158 not allowed for user type` 的模型
+  不写入 provider，避免选中后 400。
+- **渠道校验兼容**：
+  - 内核 0.7.9（旧内核会被上游以 `11128 request illegal` 拒绝）。
+  - Claude Code 的长 system prompt 会被上游做渠道指纹校验 → 桥接默认替换为中性提示词
+    （工具与消息不受影响；`config.anthropicSystemMode = "pass"` 可关闭）。
+  - Claude Code 的模型名会映射到真实 WorkBuddy 模型（`claude-* → deepseek-v4.1-flash`）。
 
-要求：Windows / macOS / Linux，Hermes Agent 已装好，本机运行并登录 WorkBuddy 桌面 App，
-PATH 里有 `node`（或稍后在设置里指定）。
+## 3. 快速开始
 
 ```bash
-# 默认 profile
-python scripts/install.py
+cd "D:\Program Files\workbuddy-connect"
 
-# 同时装到所有 bot profile（Bot Mode 的机器人）
-python scripts/install.py --profiles all
+# 启动桥接（两个实例）
+python -m workbuddy.cli_main start
 
-# 或者手工：复制到 $HERMES_HOME/plugins/workbuddy，再
-hermes plugins enable workbuddy
+# 安装到当前检测到的所有 harness（Hermes/Claude/Codex/OpenClaw/DSH）
+python -m workbuddy.cli_main install --harness all
+
+# 安装指定 harness
+python -m workbuddy.cli_main install --harness claude,codex
 ```
 
-安装脚本会：
-
-1. 把仓库复制到 `$HERMES_HOME/plugins/workbuddy/`（默认 profile）；
-2. 把 `desktop/plugin.js` 同步到 `$HERMES_HOME/desktop-plugins/workbuddy/plugin.js`；
-3. 删除旧的 `desktop-plugins/workbuddy-status/`（若存在）；
-4. 执行 `hermes plugins enable workbuddy`。
-
-### 首次使用
+Hermes 用户也可以用插件自带命令：
 
 ```bash
-hermes workbuddy start     # 启动两个桥接实例（默认 39621 / 39622）
-hermes workbuddy sync      # 探测模型权限 + 写入当前 profile 的 provider
-hermes workbuddy status    # 运行状态 / 登录态 / 账号可用模型数
+hermes workbuddy status          # 运行状态 / 登录态 / 账号可用模型数
+hermes workbuddy sync            # 刷新当前 profile 的 provider
+hermes workbuddy sync --profiles all
+hermes workbuddy doctor
 ```
 
-桌面应用在 **Settings → Plugins → workbuddy** 里有设置表单；模型菜单里会出现
-WorkBuddy / WorkBuddy AI 两个分组。
+## 4. 各 harness 说明
 
-## 4. 配置项
+### Hermes Agent
+- 插件安装到 `$HERMES_HOME/plugins/workbuddy/`（默认 + `--profiles all` 的所有 bot profile），
+  并启用、同步 provider。
+- 桌面 UI 由 `desktop/plugin.js` 提供：状态栏积分、模型菜单倍率、输入框 pill、设置页。
+- **重启桌面应用**后生效。
 
-位置：`plugins.entries.workbuddy.settings.*`（`hermes config set` 或桌面设置页）。
+### Claude Code
+- 桥接实现 Anthropic 兼容 `/v1/messages`（流式 + tool_use/tool_result + count_tokens）。
+- 适配器写入 `~/.claude/settings.json`：
+  ```
+  ANTHROPIC_BASE_URL=http://127.0.0.1:39622      （不要带 /v1）
+  ANTHROPIC_AUTH_TOKEN=<bridge token>
+  ANTHROPIC_MODEL=claude-sonnet-4-5              （桥接映射到真实模型）
+  ANTHROPIC_DEFAULT_HAIKU_MODEL=claude-haiku-4-5
+  ```
+- 原设置备份为 `settings.json.workbuddy-backup`，卸载时还原。
+- 验证：`claude -p "只回复两个字：ok"`。
 
-| 键 | 默认 | 说明 |
-|---|---|---|
-| `autostart` | `true` | 会话开始时确保桥接运行（后台线程） |
-| `auto_sync` | `true` | 模型目录/权限变化时自动刷新 provider |
-| `enable_cn` / `enable_ai` | `true` | 启用国内版 / 国际版实例 |
-| `port_cn` / `port_ai` | `39621` / `39622` | 本机端口 |
-| `data_dir` | 空 | 数据目录；空 = `%LOCALAPPDATA%\hermes-workbuddy-bridge` |
-| `node_path` | 空 | 空 = 自动探测（PATH → Hermes 自带 node → Program Files） |
-| `electron_bin_cn` / `electron_bin_ai` | 空 | WorkBuddy 可执行文件；空 = 读 `~/.dsh/.env` 的 `WORKBUDDY_ELECTRON_BIN` / `WORKBUDDY_AI_ELECTRON_BIN` |
-| `probe_models` | `true` | 同步前探测账号权限，只写入可用模型 |
-| `sync_profiles` | 空 | `all` / `current` / 逗号分隔的 profile；空 = 仅当前 profile |
+### Codex CLI
+- 写入 `~/.codex/config.toml` 的受管理块：
+  `[model_providers.workbuddy]`（base_url / wire_api="chat" / bearer token / models）
+  与 `[profiles.workbuddy]`。
+- 使用：`codex --profile workbuddy`（或把 `model_provider` 改成 `"workbuddy"`）。
+- 原配置备份为 `config.toml.workbuddy-backup`。
 
-## 5. 命令 / 工具 / 桌面 UI
+### OpenClaw
+- 写入 `~/.openclaw/workbuddy-connect.json`；OpenClaw 没有公开 provider API，
+  需在其设置里手动添加「OpenAI 兼容 provider」（base_url / api_key / 模型）。
+
+### DeepSeek Harness
+- 检查 `~/.dsh/profiles/*/node_modules/dsh-workbuddy-connect` 版本，低于 0.7.9 时
+  用 `vendor/dsh-workbuddy-connect/` 覆盖升级。
+- 升级后重启 DSH（`taskkill /F /IM "DeepSeek Harness.exe"` 后重新打开），
+  `~/.dsh/.workbuddy-host-heartbeat.json` 的 `pluginVersion` 应为 0.7.9。
+
+### 豆包 / 其它
+- `python -m workbuddy.cli_main endpoint --show-token` 输出 base_url / api_key / 模型列表，
+  在支持自定义 OpenAI 兼容端点的产品里直接填。
+
+## 5. wbconnect CLI
 
 | 命令 | 作用 |
 |---|---|
-| `hermes workbuddy status` | 两个实例的运行/登录/模型数 + 账号可用模型数（只读） |
-| `hermes workbuddy start\|stop\|restart` | 托管进程 |
-| `hermes workbuddy sync [--profiles all] [--reprobe] [--no-probe]` | 刷新 provider（默认探测权限） |
-| `hermes workbuddy cleanup --profiles all` | 移除 provider 与 `.env` 令牌 |
-| `hermes workbuddy logs --instance workbuddy-ai --lines 50` | 桥接日志 |
-| `hermes workbuddy doctor` | 凭据/登录态/模型/积分自检 |
-| `hermes workbuddy install --profiles all` | 复制并启用到其他 profile |
-| `/workbuddy status\|start\|stop\|sync` | 会话内快捷入口 |
+| `status` | 桥接状态 + 各 harness 配置状态 |
+| `start` / `stop` / `restart` | 启停桥接实例 |
+| `models [--instance]` | 列出模型 |
+| `endpoint [--show-token]` | 打印 OpenAI 兼容端点（令牌默认打码） |
+| `sync [--profiles all] [--reprobe] [--no-probe]` | 刷新 Hermes provider |
+| `install --harness all\|hermes,claude,codex,openclaw,dsh,generic` | 安装/配置 |
+| `uninstall --harness …` | 移除配置 |
+| `harnesses` | 列出支持的 harness 与检测结果 |
+| `doctor` / `logs` | 自检 / 日志 |
 
-模型工具：`workbuddy_status`、`workbuddy_models`、`workbuddy_sync`。
+Hermes 内另有 `/workbuddy status|start|stop|sync|logs` 斜杠命令。
 
-桌面 UI：状态栏右侧积分徽章（点击展开套餐余量/优惠模型）、模型菜单每行倍率与促销徽章、
-输入框模型名后的倍率、设置页明细与桥接目录选择。
+## 6. 配置
 
-## 6. 开发
+### Hermes 插件设置
+`plugins.entries.workbuddy.settings.*`：`autostart`、`auto_sync`、`enable_cn`、`enable_ai`、
+`port_cn`、`port_ai`、`data_dir`、`node_path`、`electron_bin_cn`、`electron_bin_ai`、
+`probe_models`、`sync_profiles`。
 
-```bash
-# 校验清单 + 注册 + 工具声明（用临时 HERMES_HOME，不碰真实数据）
-hermes plugins doctor "$PWD" --ci
+### 桥接配置（数据目录）
+`%LOCALAPPDATA%\hermes-workbuddy-bridge\config.json` / `config.ai.json`：
+`port`、`variant`、`token`、`catalogRefreshMinutes`、`creditsCacheSeconds`，以及：
+- `anthropicSystemMode`：`replace`（默认，绕开 Claude Code 的渠道指纹）或 `pass`
+- `anthropicSystemPrompt`：自定义替换文本
+- `anthropicDefaultModel`：`claude-*` 请求映射到的默认模型
+- `modelAliases`：`{ "claude-sonnet-4-5": "kimi-k3" }` 之类的精确映射
 
-# Python 语法
-python -m compileall -q .
+## 7. 迁移 / 数据
 
-# Node 语法
-node --check bridge/server.mjs && node --check bridge/doctor.mjs
+- 仓库已从 `C:\Users\zxtqj\projects\hermes-workbuddy` 迁到
+  **`D:\Program Files\workbuddy-connect`**（git 历史保留）。
+- 桥接数据目录保持 `%LOCALAPPDATA%\hermes-workbuddy-bridge`（配置/令牌/日志/模型缓存），
+  与仓库位置无关；旧 `~/workbuddy-bridge` 仅作 legacy 参考。
+- 首次运行会把旧目录的 `config*.json` 与 `state/catalog-cache-*.json` 复制过来（令牌不变）。
 
-# 端到端（桥接在跑的前提下）
-hermes --provider custom:workbuddy -m glm-5.3-flash chat -q "回复：ok"
-hermes --provider custom:workbuddy-ai -m deepseek-v4.1-flash chat -q "回复：ok"
-
-# 工具调用
-hermes -t workbuddy --provider custom:workbuddy -m glm-5.3-flash chat -q "调用 workbuddy_status"
-```
-
-改了 `desktop/plugin.js` 后，桌面端需要重载插件（设置 → 插件 → 重新加载，或重启桌面应用）。
-
-## 7. 故障排查
+## 8. 故障排查
 
 | 现象 | 处理 |
 |---|---|
-| `找不到 node` | 装 Node.js 或设置 `node_path` |
-| 端口被占用 | `hermes workbuddy stop`，或改端口 |
-| 启动即退出 | `hermes workbuddy logs --lines 80`；常见是 Electron 路径不对 |
-| `signIn.state != signed-in` | 打开 WorkBuddy 桌面 App 重新登录 |
-| 上游 400 `11128 request illegal` / channel verification | 桥接内核落后于 WorkBuddy 客户端：按「维护」换成最新 `host-heartbeat-*.js` |
-| 上游 400 `11158 not allowed for user type` | 该模型不在账号套餐内；`hermes workbuddy sync --reprobe` 会把它从 provider 里剔除 |
-| 国际版 502 `transport error: fetch failed` | 本机到 `www.workbuddy.ai` 不通（fake-IP 代理/DNS 拦截），与插件无关；网络恢复后 `hermes workbuddy restart` |
-| provider 里模型没出现 | `hermes workbuddy sync`；桌面端重启一次让模型菜单重读配置 |
-| 模型调用 401 | 目标 profile 的 `.env` 缺令牌：对该 profile 跑 `hermes workbuddy sync --profiles <名字>` |
-| 插件没加载 | `HERMES_PLUGINS_DEBUG=1 hermes plugins list`，或看 `logs/agent.log` 的插件 WARNING |
+| `11128 request illegal / unapproved channel` | 内核太旧或 prompt 指纹；确认 `bridge/vendor/host-bundle.js` 是 0.7.9+，Claude Code 用默认 `anthropicSystemMode=replace` |
+| `11158 not allowed for user type` | 该模型不在账号套餐内；`wbconnect sync --reprobe` 会剔除 |
+| `502 transport error: fetch failed` | 本机到 `www.workbuddy.ai` 不通（fake-IP 代理/DNS），与插件无关；恢复后 `wbconnect restart` |
+| Claude Code 报 unknown model | 适配器写入的是 `claude-sonnet-4-5` 等别名，桥接负责映射；重启 Claude Code 会话 |
+| Codex 里没有 workbuddy | `codex --profile workbuddy`；确认 `~/.codex/config.toml` 里有受管理块 |
+| Hermes 工具没出现 | 插件是否在该 profile 启用；`hermes plugins list` |
+| 401 | 目标 profile 的 `.env` 缺令牌：`hermes workbuddy sync --profiles <名字>` |
 
-## 8. 维护：升级桥接内核
-
-WorkBuddy 更新后，用 DSH 插件里的最新内核覆盖：
+## 9. 开发与验证
 
 ```bash
-cp ~/.dsh/profiles/desktop/node_modules/dsh-workbuddy-connect/lib/host-heartbeat-*.js \
-   bridge/vendor/host-bundle.js
+cd "D:\Program Files\workbuddy-connect"
+python -m compileall -q workbuddy __init__.py
+python -m workbuddy.cli_main status
+hermes plugins doctor .            # 仓库
+hermes plugins doctor workbuddy    # 已安装副本
+
+hermes --provider custom:workbuddy-ai -m deepseek-v4.1-flash chat -q "回复：ok"
+claude -p "只回复两个字：ok"
 ```
 
-再核对 `server.mjs` / `doctor.mjs` 顶部的别名导入（`O`/`m`/`b`/`S`/`x`/`w`/`P`/`j`/`M`/`u`/`l`）
-与内核文件末尾的 `export { ... as X }` 是否一致，然后 `hermes workbuddy restart`。
-
-## 9. 移除
+## 10. 卸载
 
 ```bash
-python scripts/uninstall.py            # 默认 profile
-python scripts/uninstall.py --profiles all
+python scripts/uninstall.py --profiles all      # Hermes
+python -m workbuddy.cli_main uninstall --harness claude,codex,openclaw
+python -m workbuddy.cli_main stop
 ```
 
-手工顺序：`hermes workbuddy stop` → `hermes workbuddy cleanup --profiles all` →
-`hermes plugins remove workbuddy`。数据目录 `%LOCALAPPDATA%\hermes-workbuddy-bridge`
-（配置/令牌/日志/模型缓存）需手动删除。
+数据目录需手动删除；`~/.claude/settings.json.workbuddy-backup` 与
+`~/.codex/config.toml.workbuddy-backup` 可作为手工回滚参考。
 
-## 10. 证书与第三方
+## 11. 许可
 
-- 本项目：MIT（见 `LICENSE`）。
-- `bridge/vendor/host-bundle.js` 来自 [dsh-workbuddy-connect](https://www.npmjs.com/package/dsh-workbuddy-connect)
-  （MIT，作者 corrinehu），见 `bridge/vendor/LICENSE` 与 `THIRD_PARTY_NOTICES.txt`。
-- 依赖 WorkBuddy 客户端接口，仅供个人自用；请遵守 WorkBuddy 服务条款，风险自担。
+MIT（见 `LICENSE`）。`bridge/vendor/host-bundle.js` 与 `vendor/dsh-workbuddy-connect/`
+来自 [dsh-workbuddy-connect](https://www.npmjs.com/package/dsh-workbuddy-connect)（MIT，作者
+corrinehu），见 `THIRD_PARTY_NOTICES.txt`。依赖 WorkBuddy 客户端接口，仅供个人自用。

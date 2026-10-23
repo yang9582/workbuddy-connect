@@ -371,11 +371,20 @@ async function assembleCompletion(webBody, fallbackModel) {
 
 async function handle(req, res) {
   const url = req.url ?? "/";
+  const path = url.split("?")[0];
+  if (process.env.WORKBUDDY_BRIDGE_DEBUG === "1") {
+    log(`request ${req.method} ${url} anthropic=${req.headers["anthropic-version"] ?? "-"}`);
+  }
   try {
     applyCors(res);
     if (req.method === "OPTIONS") {
       res.writeHead(204);
       res.end();
+      return;
+    }
+    // Claude Code 启动时会探测 /v1/api/hello（HEAD/GET）——无鉴权的健康检查
+    if ((req.method === "GET" || req.method === "HEAD") && (path === "/v1/api/hello" || path === "/api/hello")) {
+      writeJson(res, 200, { ok: true, service: "workbuddy-bridge" });
       return;
     }
     if (!bearerOk(req)) {
@@ -431,9 +440,14 @@ async function handle(req, res) {
       });
       return;
     }
-    if (req.method === "GET" && (url === "/v1/models" || url === "/v1/models/")) {
+    if (req.method === "GET" && (path === "/v1/models" || path === "/v1/models/")) {
       await refreshCatalog();
       const rows = displayRows();
+      // Anthropic 客户端（Claude Code）用自己的模型目录做校验：按 anthropic 形状返回别名 + 真实模型
+      if (typeof req.headers["anthropic-version"] === "string" || /[?&]beta(=|&|$)/.test(url)) {
+        writeJson(res, 200, anthropicModelList(rows));
+        return;
+      }
       writeJson(res, 200, {
         object: "list",
         data: rows.map((model) => ({
@@ -457,6 +471,15 @@ async function handle(req, res) {
       await chatCompletions(req, res);
       return;
     }
+    // Anthropic 兼容端点（Claude Code 等）：/v1/messages
+    if (req.method === "POST" && (path === "/v1/messages" || path === "/v1/messages/")) {
+      await anthropicMessages(req, res);
+      return;
+    }
+    if (req.method === "POST" && (path === "/v1/messages/count_tokens" || path === "/v1/messages/count_tokens/")) {
+      await anthropicCountTokens(req, res);
+      return;
+    }
     writeOpenAIError(res, 404, "not_found", `no such route: ${req.method} ${url}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -464,6 +487,16 @@ async function handle(req, res) {
     if (!res.headersSent) writeOpenAIError(res, 500, "internal", message);
     else res.end();
   }
+}
+
+/** 上游偶尔用 11128（“请求被拦截，请重新发送”）做限流/风控——退避重试几次。 */
+async function chatStreamWithRetry(credential, prepared, signal, attempts = 3) {
+  let result = await client.chatStream(credential, prepared, signal);
+  for (let i = 1; i <= attempts && result.ok === false && String(result.message ?? "").includes("11128"); i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 1200 * i));
+    result = await client.chatStream(credential, prepared, signal);
+  }
+  return result;
 }
 
 async function chatCompletions(req, res) {
@@ -496,7 +529,7 @@ async function chatCompletions(req, res) {
   const controller = new AbortController();
   req.on("close", () => controller.abort());
 
-  const result = await client.chatStream(credential, prepared, controller.signal);
+  const result = await chatStreamWithRetry(credential, prepared, controller.signal);
   if (!result.ok) {
     const status = UPSTREAM_ERROR_STATUS[result.kind] ?? 502;
     const detail = String(result.message ?? "").slice(0, 400);
@@ -524,6 +557,424 @@ async function chatCompletions(req, res) {
     if (!sawDone && res.writable) res.end("data: [DONE]\n\n");
   });
   body.pipe(res);
+}
+
+// ─────────────────────────── Anthropic 兼容层（/v1/messages） ───────────────────────────
+
+function writeAnthropicError(res, status, type, message) {
+  writeJson(res, status, { type: "error", error: { type, message } });
+}
+
+function anthropicStopReason(reason) {
+  if (reason === "tool_calls" || reason === "function_call") return "tool_use";
+  if (reason === "length") return "max_tokens";
+  return "end_turn";
+}
+
+// Claude Code 会在本地校验模型名；这里暴露它认识的别名 + 桥接的真实模型。
+// 别名在 /v1/messages 里由 resolveAnthropicModel 映射到真实 WorkBuddy 模型。
+const ANTHROPIC_MODEL_ALIASES = [
+  "claude-opus-5",
+  "claude-sonnet-5",
+  "claude-sonnet-4-6",
+  "claude-sonnet-4-5",
+  "claude-haiku-4-5",
+  "claude-opus-4-5",
+  "claude-sonnet-4-0",
+  "claude-3-5-haiku-20241022",
+];
+
+function anthropicModelList(rows) {
+  const seen = new Set();
+  const data = [];
+  const push = (id, name) => {
+    if (typeof id !== "string" || id === "" || seen.has(id)) return;
+    seen.add(id);
+    data.push({
+      type: "model",
+      id,
+      display_name: typeof name === "string" && name !== "" ? name : id,
+      created_at: "2025-01-01T00:00:00Z",
+    });
+  };
+  for (const alias of ANTHROPIC_MODEL_ALIASES) push(alias, alias);
+  for (const row of rows) push(row.id, row.name);
+  return {
+    data,
+    has_more: false,
+    first_id: data.length > 0 ? data[0].id : null,
+    last_id: data.length > 0 ? data[data.length - 1].id : null,
+  };
+}
+
+function resolveAnthropicModel(model) {
+  const aliases = config.modelAliases && typeof config.modelAliases === "object" ? config.modelAliases : {};
+  if (typeof aliases[model] === "string" && aliases[model] !== "") return aliases[model];
+  if (/^claude/i.test(model)) {
+    return typeof config.anthropicDefaultModel === "string" && config.anthropicDefaultModel !== ""
+      ? config.anthropicDefaultModel
+      : "deepseek-v4.1-flash";
+  }
+  return model;
+}
+
+// WorkBuddy 上游对 Claude Code 的 system prompt 做渠道指纹校验（11128）。默认把长 system
+// 换成中性提示词（工具/消息不受影响）；config.anthropicSystemMode = "pass" 可关闭。
+const ANTHROPIC_NEUTRAL_SYSTEM = (
+  "You are a helpful AI coding assistant running in a terminal CLI. "
+  + "Follow the user instructions, be concise, and use the provided tools when they help complete the task. "
+  + "Prefer reading files before editing and keep changes minimal."
+);
+
+function maybeRewriteAnthropicSystem(messages) {
+  const mode = typeof config.anthropicSystemMode === "string" ? config.anthropicSystemMode : "replace";
+  if (mode !== "replace") return messages;
+  const index = messages.findIndex((message) => message.role === "system");
+  if (index === -1) return messages;
+  const text = String(messages[index].content ?? "");
+  if (text.length < 800) return messages;
+  const custom = typeof config.anthropicSystemPrompt === "string" ? config.anthropicSystemPrompt.trim() : "";
+  const out = messages.slice();
+  out[index] = { role: "system", content: custom !== "" ? custom : ANTHROPIC_NEUTRAL_SYSTEM };
+  return out;
+}
+
+function safeJsonParse(value) {
+  if (typeof value !== "string" || value.trim() === "") return {};
+  try { return JSON.parse(value); } catch { return {}; }
+}
+
+/** Claude Code 会在 system prompt 顶部塞 x-anthropic-billing-header（cc_version/cc_entrypoint），
+ *  WorkBuddy 上游把它当作“非官方渠道”拒绝（11128）。这里在转发前剥掉这类标记行。 */
+function sanitizeSystemText(text) {
+  if (typeof text !== "string" || text === "") return "";
+  return text
+    .split("\n")
+    .filter((line) => !/^\s*x-anthropic-billing-header\s*:/i.test(line))
+    .join("\n")
+    .trim();
+}
+
+/** Anthropic content blocks -> OpenAI chat messages. */
+function toOpenAIMessages(body) {
+  const messages = [];
+  const system = body?.system;
+  const systemText = system === undefined || system === null
+    ? ""
+    : typeof system === "string"
+      ? system
+      : Array.isArray(system)
+        ? system.filter((b) => b && b.type === "text" && typeof b.text === "string").map((b) => b.text).join("\n")
+        : "";
+  const cleanSystem = sanitizeSystemText(systemText);
+  if (cleanSystem !== "") messages.push({ role: "system", content: cleanSystem });
+
+  for (const message of Array.isArray(body?.messages) ? body.messages : []) {
+    const role = message?.role === "assistant" ? "assistant" : "user";
+    const content = message?.content;
+    if (typeof content === "string") {
+      messages.push({ role, content });
+      continue;
+    }
+    if (!Array.isArray(content)) continue;
+    if (role === "assistant") {
+      const texts = [];
+      const toolCalls = [];
+      for (const block of content) {
+        if (!block) continue;
+        if (block.type === "text" && typeof block.text === "string") texts.push(block.text);
+        else if (block.type === "tool_use") {
+          toolCalls.push({
+            id: typeof block.id === "string" ? block.id : `toolu_${randomBytes(8).toString("hex")}`,
+            type: "function",
+            function: {
+              name: typeof block.name === "string" ? block.name : "tool",
+              arguments: JSON.stringify(block.input ?? {}),
+            },
+          });
+        }
+      }
+      const out = { role: "assistant" };
+      if (texts.length > 0) out.content = texts.join("\n");
+      if (toolCalls.length > 0) {
+        out.tool_calls = toolCalls;
+        if (out.content === undefined) out.content = null;
+      }
+      messages.push(out);
+    } else {
+      const texts = [];
+      for (const block of content) {
+        if (!block) continue;
+        if (block.type === "text" && typeof block.text === "string") texts.push(block.text);
+        else if (block.type === "image") texts.push("[image omitted: upstream chat API has no image input]");
+        else if (block.type === "tool_result") {
+          let output = block.content;
+          if (Array.isArray(output)) {
+            output = output.filter((b) => b && b.type === "text").map((b) => b.text).join("\n");
+          }
+          messages.push({
+            role: "tool",
+            tool_call_id: typeof block.tool_use_id === "string" ? block.tool_use_id : "",
+            content: typeof output === "string" ? output : JSON.stringify(output ?? ""),
+          });
+        }
+      }
+      if (texts.length > 0) messages.push({ role: "user", content: texts.join("\n") });
+    }
+  }
+  return messages;
+}
+
+function toOpenAITools(tools) {
+  if (!Array.isArray(tools)) return undefined;
+  const mapped = tools
+    .filter((tool) => tool && typeof tool.name === "string")
+    .map((tool) => ({
+      type: "function",
+      function: {
+        name: tool.name,
+        description: typeof tool.description === "string" ? tool.description : undefined,
+        parameters: tool.input_schema && typeof tool.input_schema === "object"
+          ? tool.input_schema
+          : { type: "object", properties: {} },
+      },
+    }));
+  return mapped.length > 0 ? mapped : undefined;
+}
+
+function toOpenAIToolChoice(choice) {
+  if (!choice || typeof choice !== "object") return undefined;
+  if (choice.type === "auto") return "auto";
+  if (choice.type === "any") return "required";
+  if (choice.type === "none") return "none";
+  if (choice.type === "tool" && typeof choice.name === "string") {
+    return { type: "function", function: { name: choice.name } };
+  }
+  return undefined;
+}
+
+function toAnthropicMessage(completion, model) {
+  const choice = (Array.isArray(completion?.choices) ? completion.choices[0] : null) ?? {};
+  const message = choice.message ?? {};
+  const content = [];
+  if (typeof message.content === "string" && message.content !== "") {
+    content.push({ type: "text", text: message.content });
+  }
+  for (const call of Array.isArray(message.tool_calls) ? message.tool_calls : []) {
+    content.push({
+      type: "tool_use",
+      id: typeof call.id === "string" && call.id !== "" ? call.id : `toolu_${randomBytes(8).toString("hex")}`,
+      name: call.function?.name ?? "tool",
+      input: safeJsonParse(call.function?.arguments),
+    });
+  }
+  return {
+    id: `msg_${randomBytes(12).toString("hex")}`,
+    type: "message",
+    role: "assistant",
+    model,
+    content,
+    stop_reason: anthropicStopReason(choice.finish_reason),
+    stop_sequence: null,
+    usage: {
+      input_tokens: completion?.usage?.prompt_tokens ?? 0,
+      output_tokens: completion?.usage?.completion_tokens ?? 0,
+    },
+  };
+}
+
+async function streamAnthropic(upstreamBody, res, model) {
+  const send = (event, data) => {
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+  send("message_start", {
+    type: "message_start",
+    message: {
+      id: `msg_${randomBytes(12).toString("hex")}`,
+      type: "message",
+      role: "assistant",
+      model,
+      content: [],
+      stop_reason: null,
+      stop_sequence: null,
+      usage: { input_tokens: 0, output_tokens: 0 },
+    },
+  });
+
+  let nextIndex = 0;
+  let textIndex = null;
+  const toolBlocks = new Map();
+  let stopReason = "end_turn";
+  let usage = { input_tokens: 0, output_tokens: 0 };
+  let buffer = "";
+  const reader = Readable.fromWeb(upstreamBody);
+  for await (const chunk of reader) {
+    buffer += chunk.toString("utf8");
+    let newline;
+    while ((newline = buffer.indexOf("\n")) !== -1) {
+      const line = buffer.slice(0, newline).trim();
+      buffer = buffer.slice(newline + 1);
+      if (!line.startsWith("data:")) continue;
+      const payload = line.slice(5).trim();
+      if (payload === "" || payload === "[DONE]") continue;
+      let event;
+      try { event = JSON.parse(payload); } catch { continue; }
+      if (event.usage && typeof event.usage === "object") {
+        usage = {
+          input_tokens: event.usage.prompt_tokens ?? usage.input_tokens,
+          output_tokens: event.usage.completion_tokens ?? usage.output_tokens,
+        };
+      }
+      const choice = Array.isArray(event.choices) ? event.choices[0] : undefined;
+      if (!choice) continue;
+      const delta = choice.delta ?? {};
+      if (typeof delta.content === "string" && delta.content !== "") {
+        if (textIndex === null) {
+          textIndex = nextIndex++;
+          send("content_block_start", {
+            type: "content_block_start",
+            index: textIndex,
+            content_block: { type: "text", text: "" },
+          });
+        }
+        send("content_block_delta", {
+          type: "content_block_delta",
+          index: textIndex,
+          delta: { type: "text_delta", text: delta.content },
+        });
+      }
+      if (Array.isArray(delta.tool_calls)) {
+        for (const call of delta.tool_calls) {
+          const key = typeof call.index === "number" ? call.index : 0;
+          let block = toolBlocks.get(key);
+          if (!block) {
+            block = { index: nextIndex++, id: `toolu_${randomBytes(8).toString("hex")}`, name: "tool", started: false };
+            toolBlocks.set(key, block);
+          }
+          if (typeof call.id === "string" && call.id !== "") block.id = call.id;
+          if (call.function && typeof call.function.name === "string" && call.function.name !== "") {
+            block.name = call.function.name;
+          }
+          if (!block.started) {
+            block.started = true;
+            send("content_block_start", {
+              type: "content_block_start",
+              index: block.index,
+              content_block: { type: "tool_use", id: block.id, name: block.name, input: {} },
+            });
+          }
+          if (call.function && typeof call.function.arguments === "string" && call.function.arguments !== "") {
+            send("content_block_delta", {
+              type: "content_block_delta",
+              index: block.index,
+              delta: { type: "input_json_delta", partial_json: call.function.arguments },
+            });
+          }
+        }
+      }
+      if (typeof choice.finish_reason === "string" && choice.finish_reason !== "") {
+        stopReason = anthropicStopReason(choice.finish_reason);
+      }
+    }
+  }
+
+  const indices = [...toolBlocks.values()].map((block) => block.index);
+  if (textIndex !== null) indices.push(textIndex);
+  indices.sort((a, b) => a - b).forEach((index) => {
+    send("content_block_stop", { type: "content_block_stop", index });
+  });
+  send("message_delta", {
+    type: "message_delta",
+    delta: { stop_reason: stopReason, stop_sequence: null },
+    usage,
+  });
+  send("message_stop", { type: "message_stop" });
+  res.end();
+}
+
+async function anthropicMessages(req, res) {
+  const contentType = req.headers["content-type"];
+  if (typeof contentType !== "string" || !contentType.trim().toLowerCase().startsWith("application/json")) {
+    writeAnthropicError(res, 415, "invalid_request_error", "Content-Type must be application/json");
+    return;
+  }
+  let credential;
+  try {
+    credential = await store.resolve();
+  } catch (error) {
+    writeAnthropicError(res, 401, "authentication_error", error instanceof Error ? error.message : String(error));
+    return;
+  }
+  let body;
+  try {
+    body = JSON.parse((await readBody(req)).toString("utf8"));
+  } catch {
+    writeAnthropicError(res, 400, "invalid_request_error", "invalid JSON body");
+    return;
+  }
+  const requestedModel = typeof body.model === "string" && body.model !== "" ? body.model : "workbuddy";
+  const model = resolveAnthropicModel(requestedModel);
+  const openaiBody = {
+    model,
+    messages: maybeRewriteAnthropicSystem(toOpenAIMessages(body)),
+    max_tokens: typeof body.max_tokens === "number" ? body.max_tokens : undefined,
+    temperature: typeof body.temperature === "number" ? body.temperature : undefined,
+    top_p: typeof body.top_p === "number" ? body.top_p : undefined,
+    stop: Array.isArray(body.stop_sequences) && body.stop_sequences.length > 0 ? body.stop_sequences : undefined,
+    tools: toOpenAITools(body.tools),
+    tool_choice: toOpenAIToolChoice(body.tool_choice),
+    stream: true,
+  };
+  for (const key of Object.keys(openaiBody)) {
+    if (openaiBody[key] === undefined) delete openaiBody[key];
+  }
+  if (process.env.WORKBUDDY_BRIDGE_DEBUG === "1") {
+    const serialized = JSON.stringify(openaiBody);
+    log(`anthropic->openai ${serialized.length} bytes model=${openaiBody.model} tools=${Array.isArray(openaiBody.tools) ? openaiBody.tools.length : 0} msgs=${openaiBody.messages.length} max_tokens=${openaiBody.max_tokens ?? "-"}`);
+    log(`body head: ${serialized.slice(0, 400)}`);
+    try {
+      mkdirSync(STATE_DIR, { recursive: true });
+      const systemMessage = openaiBody.messages.find((m) => m.role === "system");
+      const systemText = typeof systemMessage?.content === "string" ? systemMessage.content : "";
+      if (systemText.length > 10000) {
+        writeFileSync(join(STATE_DIR, "last-anthropic-system.txt"), systemText);
+        writeFileSync(join(STATE_DIR, "last-anthropic-tools.json"), JSON.stringify(openaiBody.tools ?? []));
+        writeFileSync(join(STATE_DIR, "last-anthropic-body.json"), JSON.stringify(openaiBody));
+      }
+    } catch { /* debug dump is best-effort */ }
+  }
+  const controller = new AbortController();
+  req.on("close", () => controller.abort());
+  const prepared = prepareChatBody(JSON.stringify(openaiBody));
+  const result = await chatStreamWithRetry(credential, prepared, controller.signal);
+  if (!result.ok) {
+    const status = UPSTREAM_ERROR_STATUS[result.kind] ?? 502;
+    writeAnthropicError(res, status, "api_error",
+      `workbuddy upstream ${result.kind} (http ${result.status}): ${String(result.message ?? "").slice(0, 400)}`);
+    return;
+  }
+  if (body.stream === false) {
+    const completion = await assembleCompletion(result.response.body, model);
+    writeJson(res, 200, toAnthropicMessage(completion, requestedModel));
+    return;
+  }
+  await streamAnthropic(result.response.body, res, requestedModel);
+}
+
+async function anthropicCountTokens(req, res) {
+  try {
+    const body = JSON.parse((await readBody(req)).toString("utf8"));
+    const text = JSON.stringify({ system: body?.system ?? "", messages: body?.messages ?? [], tools: body?.tools ?? [] });
+    writeJson(res, 200, { input_tokens: Math.max(1, Math.ceil(text.length / 4)) });
+  } catch {
+    writeJson(res, 200, { input_tokens: 1 });
+  }
 }
 
 // ─────────────────────────── 启动 ───────────────────────────

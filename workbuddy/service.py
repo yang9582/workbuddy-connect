@@ -35,7 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-PLUGIN_DIR = Path(__file__).resolve().parent
+PLUGIN_DIR = Path(__file__).resolve().parent.parent  # 仓库根目录（本包在 <root>/workbuddy/）
 BRIDGE_DIR = PLUGIN_DIR / "bridge"
 LEGACY_DIR = Path.home() / "workbuddy-bridge"
 
@@ -384,10 +384,12 @@ class BridgeManager:
     def _pids_on_port(self, port: int) -> List[int]:
         if os.name == "nt":
             try:
-                out = subprocess.run(
+                proc = subprocess.run(
                     ["netstat", "-ano", "-p", "tcp"],
-                    capture_output=True, text=True, timeout=20,
-                ).stdout
+                    capture_output=True, timeout=20,
+                )
+                # Windows netstat 输出是本地代码页（中文为 GBK），按字节读再解码，避免 text=True 解码失败
+                out = (proc.stdout or b"").decode("utf-8", "replace")
             except Exception:
                 return []
             pids = set()
@@ -401,7 +403,8 @@ class BridgeManager:
                     pids.add(int(parts[-1]))
             return sorted(pids)
         try:
-            out = subprocess.run(["lsof", "-ti", f"tcp:{port}"], capture_output=True, text=True, timeout=15).stdout
+            proc = subprocess.run(["lsof", "-ti", f"tcp:{port}"], capture_output=True, timeout=15)
+            out = (proc.stdout or b"").decode("utf-8", "replace")
             return sorted({int(x) for x in out.split() if x.isdigit()})
         except Exception:
             return []
@@ -484,7 +487,7 @@ class BridgeManager:
         for pid in pids:
             try:
                 if os.name == "nt":
-                    subprocess.run(["taskkill", "/PID", str(pid), "/F", "/T"], capture_output=True, text=True, timeout=20)
+                    subprocess.run(["taskkill", "/PID", str(pid), "/F", "/T"], capture_output=True, timeout=20)
                 else:
                     os.kill(pid, 15)
             except Exception:
