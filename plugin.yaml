@@ -1,7 +1,7 @@
 name: workbuddy
-version: 1.0.0
+version: 2.0.0
 manifest_version: 2
-description: "WorkBuddy 桌面 App 的模型接入 Hermes：托管本地 OpenAI 兼容桥接、同步模型目录并注册 provider"
+description: "WorkBuddy 桌面 App 的模型接入 Hermes（桥接托管 + provider 同步 + 桌面 UI）；同一仓库还提供 Claude Code / Codex / OpenClaw / DSH 适配器"
 author: Hermes Agent
 license: MIT
 tags: [workbuddy, provider, bridge, openai-compatible]
