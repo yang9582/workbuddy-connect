@@ -98,6 +98,8 @@ window.__ModuleLoader__.load({
     // ─────────────────────────── 共享状态 ───────────────────────────
     // 模型菜单行可能一次渲染十几个，必须共享一次请求，不能每行各发一个。
     const store = { data: null, error: '', busy: false, loaded: false, inflight: null, listeners: new Set() };
+    // 失败后允许的自动重试次数（Host 半重启、端口变化等瞬时故障可自愈，又不会死循环）
+    let retryBudget = 2;
 
     function notify() {
       for (const listener of store.listeners) {
@@ -115,11 +117,17 @@ window.__ModuleLoader__.load({
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
           store.data = await response.json();
           store.error = '';
+          retryBudget = 2;
+          // 成功后回报一次，便于从 Host 侧确认"数据链路真的通了"
+          try {
+            postBeacon(null, { data: { variants: Array.isArray(store.data.variants) ? store.data.variants.length : 0 } });
+          } catch { /* 诊断尽力而为 */ }
         } catch (failure) {
           store.error = String((failure && failure.message) || failure).slice(0, 160);
         } finally {
           store.busy = false;
-          store.loaded = true;
+          // 失败不算"已加载"：否则一次 404 会让后续挂载都不再重试（Host 半重启后会一直空白）
+          store.loaded = store.error === '';
           store.inflight = null;
           notify();
         }
@@ -161,6 +169,22 @@ window.__ModuleLoader__.load({
         return () => { currentProvider.listeners.delete(listener); };
       }, []);
       return currentProvider.bySession.get(String(sessionId || 'default')) || null;
+    }
+
+    // 诊断：记录模型标签实际收到的 props（去重，仅保留最近 12 条），随 beacon 上报
+    const diagnostics = { labels: [] };
+    function noteLabelProps(props) {
+      try {
+        const entry = {
+          placement: props && props.placement ? String(props.placement) : '',
+          provider: props && props.provider ? String(props.provider.id || '') : '',
+          session: props && props.sessionId ? String(props.sessionId).slice(0, 8) : '',
+        };
+        const last = diagnostics.labels[diagnostics.labels.length - 1];
+        if (last && JSON.stringify(last) === JSON.stringify(entry)) return;
+        diagnostics.labels.push(entry);
+        if (diagnostics.labels.length > 12) diagnostics.labels.shift();
+      } catch { /* 诊断尽力而为 */ }
     }
 
     // ─────────────────────────── 小工具 ───────────────────────────
@@ -274,6 +298,7 @@ window.__ModuleLoader__.load({
       const placement = props && props.placement;
       const labelProvider = props && props.provider ? String(props.provider.id || '') : '';
       const labelSession = props && props.sessionId;
+      noteLabelProps(props);
       // 只有 trigger 位代表"当前会话选中的模型"；菜单行（option/menu）不能参与记录
       React.useEffect(() => {
         if (placement !== 'trigger') return;
@@ -313,6 +338,13 @@ window.__ModuleLoader__.load({
       const providerId = useCurrentProvider(props && props.sessionId);
       const isWorkbuddy = PROVIDERS.has(providerId || '');
       const state = useStore(isWorkbuddy);
+      // 拿不到数据时有限次自动重试：Host 半重启后不必让用户手动刷新
+      React.useEffect(() => {
+        if (!isWorkbuddy) return;
+        if (state.error === '' || state.busy || retryBudget <= 0) return;
+        retryBudget -= 1;
+        void refresh(false);
+      }, [isWorkbuddy, state.error, state.busy]);
       if (!isWorkbuddy) return null;
       const variants = state.data && Array.isArray(state.data.variants) ? state.data.variants : [];
       if (variants.length === 0) return null;
@@ -480,18 +512,21 @@ window.__ModuleLoader__.load({
       }
     }
 
+    let lastReport = [];
     /** 把本次 apply 的注册结果回报给 Host（/workbuddy/beacon 可查），用于区分"旧模块"与"注册失败"。 */
-    function postBeacon(report) {
+    function postBeacon(report, extra) {
       try {
         void fetch('/workbuddy/client-beacon', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
+          body: JSON.stringify(Object.assign({
             build: BUILD,
             locale: activeLocale,
-            slots: report,
+            slots: report || lastReport,
+            labels: diagnostics.labels,
+            providers: Object.fromEntries(currentProvider.bySession),
             href: typeof location === 'undefined' ? '' : String(location.href),
-          }),
+          }, extra || {})),
         }).catch(() => {});
       } catch { /* 诊断信息尽力而为 */ }
     }
@@ -529,6 +564,7 @@ window.__ModuleLoader__.load({
 
         // 不在这里预取：只有当前会话选中 WorkBuddy 模型（积分条渲染）或打开设置页时才请求，
         // 其它模型下完全不碰 /workbuddy/status。
+        lastReport = report;
         // 延迟一拍，等 inject 的延迟回调跑完再自报
         setTimeout(() => postBeacon(report), 0);
       },
