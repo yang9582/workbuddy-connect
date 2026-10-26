@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -80,12 +79,20 @@ class HermesAdapter(HarnessAdapter):
             legacy = home / "desktop-plugins" / LEGACY_DESKTOP_ID
             if legacy.exists():
                 shutil.rmtree(legacy)
-            cmd = [providers_sync.hermes_exe()]
-            if name != "default":
-                cmd += ["-p", name]
-            cmd += ["plugins", "enable", PLUGIN_ID]
-            result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
-            status = "启用成功" if result.returncode == 0 else "启用失败（手动: hermes plugins enable workbuddy）"
+            status = "启用成功"
+            try:
+                # 走带超时的包装：hermes CLI 可能拉起常驻 runtime，超时后要结束整棵树，
+                # 否则子进程继承 stdout 会让调用方永远等不到 EOF。
+                result = providers_sync.run_hermes(
+                    ["plugins", "enable", PLUGIN_ID],
+                    None if name == "default" else name,
+                    timeout=180,
+                )
+                if result.returncode != 0:
+                    detail = (result.stderr or result.stdout or "").strip().splitlines()
+                    status = "启用失败（手动: hermes plugins enable workbuddy）" + (f"（{detail[-1]}）" if detail else "")
+            except Exception as exc:  # noqa: BLE001
+                status = f"启用失败（{exc}）"
             lines.append(f"[{name}] 已安装 -> {dest}；{status}")
         if not dry_run:
             summary = providers_sync.sync(manager, explicit=(profiles or "all"))

@@ -16,6 +16,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -58,6 +59,12 @@ def _kill_tree(pid: int) -> None:
 
 
 def _run(args: List[str], profile: Optional[str] = None, timeout: float = 180.0) -> subprocess.CompletedProcess:
+    """跑一次 hermes CLI。
+
+    输出写临时文件而不是 PIPE：hermes 会拉起常驻的 pm-runtime 子进程，它们继承
+    stdout 管道后，调用方会一直等不到 EOF（表现是 `wbconnect install` 干完了却不返回）。
+    这里用 `proc.wait(timeout)` 只等直接子进程，再回读文件，从根上避免该问题。
+    """
     cmd = [hermes_exe()]
     if profile:
         cmd += ["-p", profile]
@@ -67,31 +74,30 @@ def _run(args: List[str], profile: Optional[str] = None, timeout: float = 180.0)
     flags = 0
     if os.name == "nt":
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        env=env,
-        creationflags=flags,
-        start_new_session=(os.name != "nt"),
-    )
-    try:
-        out, err = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        _kill_tree(proc.pid)
+
+    with tempfile.TemporaryFile() as sink:
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=sink,
+            stderr=subprocess.STDOUT,
+            env=env,
+            creationflags=flags,
+            start_new_session=(os.name != "nt"),
+        )
         try:
-            out, err = proc.communicate(timeout=10)
+            code = proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
-            proc.kill()
-            out, err = "", ""
-        raise RuntimeError(
-            f"hermes {' '.join(args)} 超时（{int(timeout)}s）"
-            + (f"：{(err or out or '').strip()[:200]}" if (err or out) else "")
-        ) from None
-    return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+            _kill_tree(proc.pid)
+            try:
+                code = proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                code = -1
+            raise RuntimeError(f"hermes {' '.join(args)} 超时（{int(timeout)}s）") from None
+        sink.seek(0)
+        output = sink.read().decode("utf-8", "replace")
+    return subprocess.CompletedProcess(cmd, code, output, "")
 
 
 def _get(key: str, profile: Optional[str]) -> str:
@@ -109,6 +115,11 @@ def _set(key: str, value: str, profile: Optional[str]) -> None:
 def _unset(key: str, profile: Optional[str]) -> bool:
     result = _run(["config", "unset", key], profile, timeout=60)
     return result.returncode == 0
+
+
+def run_hermes(args: List[str], profile: Optional[str] = None, timeout: float = 180.0) -> subprocess.CompletedProcess:
+    """供其它模块调用的 hermes CLI 包装：带超时，超时会结束整棵进程树。"""
+    return _run(args, profile, timeout)
 
 
 # ─────────────────────────── profile 解析 ───────────────────────────
