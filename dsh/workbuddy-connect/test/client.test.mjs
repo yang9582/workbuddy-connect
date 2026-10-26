@@ -107,6 +107,10 @@ test("apply 注册三个插槽、注册 locale 字典并回报 beacon", async ()
   assert.equal(payload.locale, "zh-CN");
   assert.deepEqual(payload.slots.map((entry) => entry.slot).sort(), slots);
   assert.ok(payload.slots.every((entry) => entry.registered === true), JSON.stringify(payload.slots));
+
+  // 不在 apply 时预取：只有选中 WorkBuddy 模型（或打开设置页）才请求 /workbuddy/status
+  const statusCalls = calls.filter((call) => String(call.url).includes("/workbuddy/status"));
+  assert.deepEqual(statusCalls, [], "apply 阶段不应请求 /workbuddy/status");
 });
 
 test("单个插槽注册失败时不影响其它插槽", async () => {

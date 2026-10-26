@@ -127,15 +127,40 @@ window.__ModuleLoader__.load({
       return store.inflight;
     }
 
-    function useStore() {
+    /** @param {boolean} autoLoad 首次挂载时是否自动拉取（积分条只在 WorkBuddy 模型下才拉） */
+    function useStore(autoLoad = true) {
       const [, force] = React.useState(0);
       React.useEffect(() => {
         const listener = () => force((value) => value + 1);
         store.listeners.add(listener);
-        if (!store.loaded) void refresh(false);
+        if (autoLoad && !store.loaded) void refresh(false);
         return () => { store.listeners.delete(listener); };
-      }, []);
+      }, [autoLoad]);
       return store;
+    }
+
+    // 当前会话选中的 provider。
+    // 客户端没有"模型切换"事件，所以由 conversation.input.model.label 在
+    // placement === 'trigger'（输入框里的当前模型）时记录，按 sessionId 分桶。
+    const currentProvider = { bySession: new Map(), listeners: new Set() };
+
+    function noteCurrentProvider(sessionId, providerId) {
+      const key = String(sessionId || 'default');
+      if (currentProvider.bySession.get(key) === providerId) return;
+      currentProvider.bySession.set(key, providerId);
+      for (const listener of currentProvider.listeners) {
+        try { listener(); } catch { /* 单个订阅者出错不影响其它 */ }
+      }
+    }
+
+    function useCurrentProvider(sessionId) {
+      const [, force] = React.useState(0);
+      React.useEffect(() => {
+        const listener = () => force((value) => value + 1);
+        currentProvider.listeners.add(listener);
+        return () => { currentProvider.listeners.delete(listener); };
+      }, []);
+      return currentProvider.bySession.get(String(sessionId || 'default')) || null;
     }
 
     // ─────────────────────────── 小工具 ───────────────────────────
@@ -245,9 +270,17 @@ window.__ModuleLoader__.load({
      */
     function ModelLabel(props) {
       // hooks 必须无条件按同一顺序调用，否则 provider 切换时会触发 hook 顺序错误
-      useStore();
+      useStore(false);
+      const placement = props && props.placement;
+      const labelProvider = props && props.provider ? String(props.provider.id || '') : '';
+      const labelSession = props && props.sessionId;
+      // 只有 trigger 位代表"当前会话选中的模型"；菜单行（option/menu）不能参与记录
+      React.useEffect(() => {
+        if (placement !== 'trigger') return;
+        noteCurrentProvider(labelSession, PROVIDERS.has(labelProvider) ? labelProvider : 'other');
+      }, [placement, labelProvider, labelSession]);
       try {
-        const providerId = props && props.provider ? String(props.provider.id || '') : '';
+        const providerId = labelProvider;
         const model = (props && props.model) || {};
         const base = String(model.name || model.displayName || model.id || '');
         if (!PROVIDERS.has(providerId)) return h('span', null, base);
@@ -274,9 +307,13 @@ window.__ModuleLoader__.load({
       return lines.join('\n');
     };
 
-    /** 注册在 conversation.input.left：与模型选择器同一行、位于其左侧。 */
-    function ComposerCredits() {
-      const state = useStore();
+    /** 注册在 conversation.input.left：与模型选择器同一行、位于其左侧。
+     *  只在该会话选中 WorkBuddy / WorkBuddy AI 模型时渲染，其它模型下完全不占位、也不发请求。 */
+    function ComposerCredits(props) {
+      const providerId = useCurrentProvider(props && props.sessionId);
+      const isWorkbuddy = PROVIDERS.has(providerId || '');
+      const state = useStore(isWorkbuddy);
+      if (!isWorkbuddy) return null;
       const variants = state.data && Array.isArray(state.data.variants) ? state.data.variants : [];
       if (variants.length === 0) return null;
 
@@ -419,7 +456,7 @@ window.__ModuleLoader__.load({
     }
 
     // ─────────────────────────── 装配 ───────────────────────────
-    const BUILD = '2.1.0+inline-credits';
+    const BUILD = '2.1.0+wb-only-credits';
     let activeLocale = 'en';
 
     function registerLocale(ctx) {
@@ -490,8 +527,8 @@ window.__ModuleLoader__.load({
         inject('settings.plugins.tab', { id: 'workbuddy', order: 20, label: 'WorkBuddy' }, SettingsPage);
         inject('conversation.input.model.label', {}, ModelLabel);
 
-        // 只取一次：积分查询会真的打到计费接口，不做轮询；需要时用卡片上的"刷新"。
-        void refresh(false);
+        // 不在这里预取：只有当前会话选中 WorkBuddy 模型（积分条渲染）或打开设置页时才请求，
+        // 其它模型下完全不碰 /workbuddy/status。
         // 延迟一拍，等 inject 的延迟回调跑完再自报
         setTimeout(() => postBeacon(report), 0);
       },
