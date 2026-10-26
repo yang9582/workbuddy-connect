@@ -83,13 +83,14 @@ test("apply 注册三个插槽、注册 locale 字典并回报 beacon", async ()
 
   const slots = registrations.map((entry) => entry.slot).sort();
   assert.deepEqual(slots, [
-    "conversation.composer.dock",
+    "conversation.input.left",
     "conversation.input.model.label",
     "settings.plugins.tab",
   ]);
 
-  const dock = registrations.find((entry) => entry.slot === "conversation.composer.dock");
-  assert.equal(dock.options.id, "workbuddy-credits");
+  const credits = registrations.find((entry) => entry.slot === "conversation.input.left");
+  assert.equal(credits.options.id, "workbuddy-credits");
+  assert.equal(credits.options.order, 5);
   const tab = registrations.find((entry) => entry.slot === "settings.plugins.tab");
   assert.equal(tab.options.label, "WorkBuddy");
 
@@ -121,7 +122,7 @@ test("单个插槽注册失败时不影响其它插槽", async () => {
   assert.doesNotThrow(() => mod.apply(ctx));
   await new Promise((resolve) => setTimeout(resolve, 5));
   const slots = registrations.map((entry) => entry.slot).sort();
-  assert.deepEqual(slots, ["conversation.composer.dock", "settings.plugins.tab"]);
+  assert.deepEqual(slots, ["conversation.input.left", "settings.plugins.tab"]);
 });
 
 test("重复注册 locale 不抛异常（降级为内置文案）", () => {

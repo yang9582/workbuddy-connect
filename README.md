@@ -29,7 +29,7 @@ Hermes Agent、Claude Code、Codex CLI、OpenClaw、DeepSeek Harness（DSH）共
 | 亮点 | 说明 |
 |---|---|
 | **上下文窗口默认拉满** | 国际版模型目录里的 `200K / 300K` 只是**默认值**，实际可选到 `1M`（`supportedContextWindows`，实测 11 个模型受益）。本插件默认取**可选最大值**，例如 `hy4-preview` 从 200K → 1M；也可以按模型精确指定（`contextWindowOverrides`），或退回上游默认（`contextWindowPolicy: "default"`）。 |
-| **剩余积分常驻输入框** | DSH 输入框下方常驻 `WB 1,791 · WB AI 189`，点开即看套餐余量与模型倍率。积分**不做轮询**（每次查询都会真实打到计费接口），只在挂载与手动刷新时取。 |
+| **剩余积分贴在模型名左边** | DSH 输入框工具行的最左侧、与模型选择器同一水平线上常驻 `WB 1,791 · WB AI 189`，悬停看各套餐余量，旁边的 `↻` 可手动刷新。积分**不做轮询**（每次查询都会真实打到计费接口），只在挂载与手动刷新时取。 |
 | **模型菜单直接标倍率** | 模型选择器里每一行都显示 `· x0.11 · 夜间折扣`，触发器和菜单当前值同样生效——选模型前就知道这模型贵不贵。 |
 | **设置页一张表看全** | 设置 → 插件 → WorkBuddy：账号、登录态、令牌有效期、积分与更新时间、套餐余量、全量模型表（上下文 / 倍率 / 促销）。 |
 | **一套桥接，五种 harness** | Hermes 原生插件、Claude Code（Anthropic `/v1/messages`）、Codex CLI、OpenClaw、DSH；外加任何支持自定义 OpenAI 兼容端点的产品（豆包等）。 |
@@ -41,13 +41,11 @@ Hermes Agent、Claude Code、Codex CLI、OpenClaw、DeepSeek Harness（DSH）共
 
 ## 🖼️ 截图
 
-<!-- 建议把截图放到 docs/screenshots/ 后取消下面的注释
-![输入框下方的剩余积分与倍率](docs/screenshots/composer-dock.png)
-![模型菜单里的倍率与促销](docs/screenshots/model-menu.png)
-![设置页：账号 / 令牌 / 套餐 / 模型表](docs/screenshots/settings.png)
--->
+![WorkBuddy Connect 界面预览 1](docs/screenshots/preview-1.png)
+![WorkBuddy Connect 界面预览 2](docs/screenshots/preview-2.png)
 
-> 截图位已留好：把图片放进 `docs/screenshots/`，再取消上面注释即可。
+> 还缺一张"输入框工具行左侧的积分条 + 模型名后倍率"的横图，建议补到
+> `docs/screenshots/composer-credits.png`（宽图），这张最能说明亮点。
 
 ## 🧭 工作原理
 
@@ -118,7 +116,7 @@ python -m workbuddy.cli_main dsh bundle
 它会带来：
 
 1. **模型分组**：模型选择器里出现 `WorkBuddy` / `WorkBuddy AI`，走本地桥接；
-2. **积分卡片**：输入框下方常驻剩余积分，点开看套餐与倍率；
+2. **积分条**：输入框工具行左侧、模型名左边常驻剩余积分（悬停看套餐，`↻` 刷新）；
 3. **模型菜单倍率**：每行模型后面追加 `· x0.11 · 夜间折扣`；
 4. **设置页**：设置 → 插件 → WorkBuddy，账号/令牌/积分/套餐/全量模型表；
 5. **上下文窗口**：默认取该模型可选的最大窗口（国际版最高 1M），设置页能看到生效值与可选项；
@@ -244,7 +242,7 @@ Claude Code / Codex / OpenClaw / DSH（bundle、旧补丁残留）/ 部署版本
 | `WorkBuddy 内核契约不匹配` | `wbconnect kernel` 看记录，`wbconnect kernel --refresh` 重新提取并校验导出 |
 | `502 transport error: fetch failed` | 本机到 `www.workbuddy.ai` 不通（代理/DNS），与插件无关；恢复后 `wbconnect restart` |
 | DSH 里没有 WorkBuddy 分组 | 重启 DSH；`wbconnect dsh status` 看 `mode`；`~/.dsh/.env` 要有 `WORKBUDDY_BRIDGE_TOKEN` |
-| DSH 输入框下方没有积分卡片 | `curl http://127.0.0.1:<端口>/workbuddy/status` 确认 Host 半；`/workbuddy/beacon` 看 Client 半自检；必要时 disable→enable 插件或重启 DSH |
+| DSH 输入框左侧没有积分条 | `curl http://127.0.0.1:<端口>/workbuddy/status` 确认 Host 半；`/workbuddy/beacon` 看 Client 半自检；必要时刷新页面、disable→enable 插件或重启 DSH |
 | 模型菜单里没有倍率 | 该标签由 Client 半接管，需要刷新页面或重启 DSH 加载新模块 |
 | 没有推理档位 | 默认会补齐三档；检查 `effortPolicy` 是否被设为 `declared`，或模型是否有 `reasoning` 字段 |
 | 不确定哪一环坏了 | `wbconnect doctor --all` |

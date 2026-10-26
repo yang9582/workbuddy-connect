@@ -196,18 +196,20 @@ window.__ModuleLoader__.load({
 
     // ─────────────────────────── 样式 ───────────────────────────
     const style = {
-      row: {
-        display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap',
-        fontSize: '11px', lineHeight: '18px', color: 'inherit', opacity: 0.85,
-        padding: '2px 2px 0',
+      // 输入框工具行左侧的积分条
+      creditRow: {
+        display: 'inline-flex', alignItems: 'center', gap: '6px',
+        fontSize: '11px', lineHeight: '18px', color: 'inherit', whiteSpace: 'nowrap',
+        marginRight: '2px',
       },
-      chip: {
-        display: 'inline-flex', alignItems: 'center', gap: '5px',
-        border: '1px solid rgba(127,127,127,0.35)', borderRadius: '999px',
-        background: 'transparent', color: 'inherit', cursor: 'pointer',
-        padding: '0 8px', height: '20px', fontSize: '11px', lineHeight: '18px',
+      credit: { display: 'inline-flex', alignItems: 'center', gap: '3px', opacity: 0.78 },
+      creditBad: { opacity: 0.45 },
+      creditLabel: { opacity: 0.7 },
+      creditSep: { opacity: 0.35 },
+      creditRefresh: {
+        border: 'none', background: 'transparent', color: 'inherit', cursor: 'pointer',
+        fontSize: '12px', lineHeight: '18px', padding: '0 2px', opacity: 0.55,
       },
-      chipBad: { borderStyle: 'dashed', opacity: 0.6 },
       muted: { opacity: 0.6 },
       panel: {
         marginTop: '4px', border: '1px solid rgba(127,127,127,0.3)', borderRadius: '8px',
@@ -262,76 +264,48 @@ window.__ModuleLoader__.load({
       }
     }
 
-    // ─────────────────────────── 输入框积分徽章 ───────────────────────────
-    function VariantChip({ variant, onOpen }) {
-      const bad = variant.ok !== true;
-      const title = bad
-        ? `${variant.label}：${variant.error || t('notInPlan', '不可用')}`
-        : `${variant.label} ${creditText(variant.credits)}`;
-      const label = SHORT[variant.key] || variant.label || variant.key;
-      const total = bad
-        ? '✕'
-        : (variant.credits && variant.credits.unlimited === true ? '∞' : number(variant.credits && variant.credits.total));
-      return h('button', {
-        type: 'button', title, onClick: onOpen,
-        style: bad ? Object.assign({}, style.chip, style.chipBad) : style.chip,
-      }, [
-        h('span', { key: 'label', style: style.muted }, label),
-        h('span', { key: 'total', style: { fontVariantNumeric: 'tabular-nums' } }, total),
-      ]);
-    }
-
-    function Dock() {
-      const state = useStore();
-      const [open, setOpen] = React.useState(false);
-      const variants = state.data && Array.isArray(state.data.variants) ? state.data.variants : [];
-      if (variants.length === 0 && state.error === '' && state.data === null) return null;
-
-      const chips = variants.map((variant) =>
-        h(VariantChip, { key: variant.key, variant, onOpen: () => setOpen((value) => !value) }),
-      );
-      if (variants.length === 0 && state.error !== '') {
-        chips.push(h('span', {
-          key: 'err', title: state.error,
-          style: Object.assign({}, style.chip, style.chipBad),
-        }, 'WorkBuddy ✕'));
+    // ─────────────────────────── 输入框工具行：积分（模型名左侧） ───────────────────────────
+    const creditTitle = (variant) => {
+      if (variant.ok !== true) return `${variant.label}：${variant.error || t('notInPlan', '不可用')}`;
+      const lines = [`${variant.label} ${creditText(variant.credits)}`];
+      for (const pkg of (variant.credits && variant.credits.packages) || []) {
+        lines.push(`${pkg.name || '—'} ${number(pkg.remain)} / ${number(pkg.size)}`);
       }
+      return lines.join('\n');
+    };
 
-      return h('div', { style: { display: 'flex', flexDirection: 'column' } }, [
-        h('div', { key: 'chips', style: style.row }, chips),
-        open ? providerWarning(state.data) : null,
-        open
-          ? h('div', { key: 'panel', style: style.panel }, [
-              h('div', { key: 'bar', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } }, [
-                h('span', { key: 't', style: style.sectionTitle }, t('title', 'WorkBuddy 余量与倍率')),
-                h('button', {
-                  key: 'r', type: 'button', style: style.refresh, disabled: state.busy,
-                  onClick: () => { void refresh(true); },
-                }, state.busy ? t('refreshing', '刷新中…') : t('refresh', '刷新')),
-              ]),
-              ...variants.map((variant) => h('div', { key: variant.key, style: { display: 'flex', flexDirection: 'column', gap: '2px' } }, [
-                h('div', { key: 'h', style: style.line }, [
-                  h('span', { key: 'n', style: style.sectionTitle }, variant.label || variant.key),
-                  h('span', { key: 'v', style: variant.ok === true ? {} : style.muted },
-                    variant.ok === true ? creditText(variant.credits) : (variant.error || t('notInPlan', '不可用'))),
-                ]),
-                variant.ok === true
-                  ? h('div', { key: 'm', style: Object.assign({}, style.muted, style.line) }, [
-                      h('span', { key: 'x' }, t('packages', '套餐余量')),
-                      h('span', { key: 'y' }, (variant.models || [])
-                        .filter((model) => (model.badges || []).length > 0 || model.free === true)
-                        .slice(0, 4).map(rateText).filter(Boolean).join(' · ') || '—'),
-                    ])
-                  : null,
-              ])),
-              h('div', { key: 'foot', style: Object.assign({}, style.line, style.muted) }, [
-                h('span', { key: 'hint' }, t('footer', '倍率仅用于展示，不影响实际计费。')),
-                h('span', { key: 'at' }, state.data && state.data.fetchedAt
-                  ? new Date(state.data.fetchedAt).toLocaleTimeString() : ''),
-              ]),
-            ])
-          : null,
-      ]);
+    /** 注册在 conversation.input.left：与模型选择器同一行、位于其左侧。 */
+    function ComposerCredits() {
+      const state = useStore();
+      const variants = state.data && Array.isArray(state.data.variants) ? state.data.variants : [];
+      if (variants.length === 0) return null;
+
+      const parts = [];
+      variants.forEach((variant, index) => {
+        if (index > 0) parts.push(h('span', { key: `sep-${variant.key}`, style: style.creditSep }, '·'));
+        const bad = variant.ok !== true;
+        const total = bad
+          ? '✕'
+          : (variant.credits && variant.credits.unlimited === true ? '∞' : number(variant.credits && variant.credits.total));
+        parts.push(h('span', {
+          key: variant.key,
+          title: creditTitle(variant),
+          style: bad ? Object.assign({}, style.credit, style.creditBad) : style.credit,
+        }, [
+          h('span', { key: 'n', style: style.creditLabel }, SHORT[variant.key] || variant.label || variant.key),
+          h('span', { key: 'v', style: { fontVariantNumeric: 'tabular-nums' } }, total),
+        ]));
+      });
+      parts.push(h('button', {
+        key: 'refresh',
+        type: 'button',
+        title: state.busy ? t('refreshing', '刷新中…') : t('refresh', '刷新'),
+        disabled: state.busy,
+        onClick: () => { void refresh(true); },
+        style: style.creditRefresh,
+      }, state.busy ? '…' : '↻'));
+
+      return h('div', { style: style.creditRow }, parts);
     }
 
     // ─────────────────────────── 设置页 ───────────────────────────
@@ -445,7 +419,7 @@ window.__ModuleLoader__.load({
     }
 
     // ─────────────────────────── 装配 ───────────────────────────
-    const BUILD = '2.1.0+label-locale';
+    const BUILD = '2.1.0+inline-credits';
     let activeLocale = 'en';
 
     function registerLocale(ctx) {
@@ -511,7 +485,8 @@ window.__ModuleLoader__.load({
           }
         };
 
-        inject('conversation.composer.dock', { id: 'workbuddy-credits', order: 12 }, Dock);
+        // 积分条：与模型选择器同一行、位于其左侧（composer tool row 的左侧列表）
+        inject('conversation.input.left', { id: 'workbuddy-credits', order: 5 }, ComposerCredits);
         inject('settings.plugins.tab', { id: 'workbuddy', order: 20, label: 'WorkBuddy' }, SettingsPage);
         inject('conversation.input.model.label', {}, ModelLabel);
 
