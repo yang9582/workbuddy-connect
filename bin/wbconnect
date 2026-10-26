@@ -1,0 +1,6 @@
+#!/usr/bin/env sh
+# wbconnect 的 POSIX 包装：切到仓库根目录后调用 python -m workbuddy.cli_main
+set -e
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$ROOT"
+exec python -m workbuddy.cli_main "$@"

@@ -1,9 +1,23 @@
-@deepseek-ai/dsh-atomic-write 0.2.1-rc.2
-Bundled from https://github.com/deepseek-ai/deepseek-harness/tree/main/packages/util/atomic-write
+WorkBuddy Connect — third-party components
+==========================================
 
+本仓库包含以下第三方组件，均为 MIT 许可。MIT 许可全文附在文件末尾。
+
+1. dsh-workbuddy-connect 0.7.9
+   Copyright (c) 2026 Corrine Hu
+   https://github.com/corrinehu/dsh-workbuddy-connect
+   文件：bridge/vendor/host-bundle.js（该包 lib/host-heartbeat-*.js 的逐字节副本）
+         vendor/dsh-workbuddy-connect/**（该包的离线副本，用于恢复/升级）
+   用途：提供 WorkBuddy 凭据读取、上游客户端与模型目录解析。
+
+2. @deepseek-ai/dsh-atomic-write / @deepseek-ai/dsh-home-paths
+   Copyright (c) 2026 DeepSeek
+   https://github.com/deepseek-ai/deepseek-harness
+   文件：bridge/node_modules/@deepseek-ai/**（API 兼容的最小本地替身，未复制上游实现）
+   用途：让桥接在不安装 DSH 的情况下解析 ~/.dsh 路径、做原子写入。
+
+----------------------------------------------------------------------
 MIT License
-
-Copyright (c) 2026 DeepSeek
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
