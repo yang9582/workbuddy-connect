@@ -229,12 +229,55 @@ class DshEffortRenderingTests(unittest.TestCase):
         self.addCleanup(patcher.stop)
         self.adapter = DshAdapter()
 
-    def _render(self, efforts, model=None):
+    def _render(self, efforts, model=None, policy=None):
         row = model or {"id": "deepseek-v4.1-flash", "context_length": 1000000}
         provider = self.adapter._render_provider(
-            "workbuddy", "http://127.0.0.1:39621/v1", "TOKEN", [row], efforts,
+            "workbuddy", "http://127.0.0.1:39621/v1", "TOKEN", [row], efforts, policy,
         )
         return "\n".join(provider)
+
+    def test_forced_levels_for_undeclared_reasoning_models(self) -> None:
+        row = {"id": "hy3", "reasoning": {"supports": True, "defaultEffort": "high"}}
+        text = self._render({}, row, {"force": True, "levels": ["low", "medium", "high"], "overrides": {}})
+        self.assertIn("reasoningEfforts:", text)
+        for effort in ("low", "medium", "high"):
+            self.assertIn(f"{effort}: '{effort}'", text)
+        self.assertNotIn("max:", text)
+
+    def test_declared_policy_leaves_undeclared_models_alone(self) -> None:
+        row = {"id": "hy3", "reasoning": {"supports": True, "defaultEffort": "high"}}
+        text = self._render({}, row, {"force": False, "levels": ["low", "medium", "high"], "overrides": {}})
+        self.assertNotIn("reasoningEfforts", text)
+
+    def test_overrides_win_and_are_filtered(self) -> None:
+        row = {"id": "glm-5.3", "reasoning": {"supports": True, "supportedEfforts": ["low", "high", "max"]}}
+        policy = {"force": True, "levels": ["low"], "overrides": {"glm-5.3": ["high", "banana"]}}
+        text = self._render({}, row, policy)
+        block = text.split("reasoningEfforts:")[1].split("compat:")[0]
+        self.assertIn("high: 'high'", block)
+        self.assertNotIn("low:", block)
+        self.assertNotIn("banana", block)
+
+    def test_no_efforts_when_model_cannot_reason(self) -> None:
+        row = {"id": "plain", "reasoning": {"supports": False}}
+        text = self._render({}, row, {"force": True, "levels": ["low"], "overrides": {}})
+        self.assertNotIn("reasoningEfforts", text)
+
+    def test_effort_policy_reads_bridge_config(self) -> None:
+        class FakeManager:
+            def read_config(self, inst):
+                return {
+                    "effortPolicy": "declared",
+                    "effortForceLevels": ["high", "max"],
+                    "effortOverrides": {"x": ["low"]},
+                }
+
+        from workbuddy import service
+
+        policy = self.adapter._effort_policy(FakeManager(), service.INSTANCES[0])
+        self.assertFalse(policy["force"])
+        self.assertEqual(policy["levels"], ["high", "max"])
+        self.assertEqual(policy["overrides"], {"x": ["low"]})
 
     def test_catalog_declaration_is_enough_without_probe(self) -> None:
         row = {"id": "glm-5.3", "reasoning": {"supports": True, "supportedEfforts": ["low", "high", "max"]}}

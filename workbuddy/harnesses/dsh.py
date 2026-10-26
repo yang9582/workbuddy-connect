@@ -60,6 +60,8 @@ DISPLAY_NAMES = {"workbuddy": "WorkBuddy", "workbuddy-ai": "WorkBuddy AI"}
 # pi-ai 接受的档位名（与 llm-pi-ai 的 schema 一致），顺序即 UI 里的排列
 EFFORT_ORDER = ("off", "minimal", "low", "medium", "high", "xhigh", "max")
 EFFORT_KEYS = set(EFFORT_ORDER)
+# 目录未声明档位时的强制三档（可在桥接配置里用 effortForceLevels 覆盖）
+DEFAULT_FORCE_LEVELS = ("low", "medium", "high")
 
 
 def _yaml_str(value: str) -> str:
@@ -162,8 +164,62 @@ class DshAdapter(HarnessAdapter):
         return info
 
     # ── 配置渲染 ────────────────────────────────────────────
+    def _effort_policy(self, manager, inst) -> Dict[str, Any]:
+        """从桥接配置读档位策略。
+
+        - ``effortPolicy``: ``force``（默认，目录未声明的推理模型也写出三档）/
+          ``declared``（只写目录声明或探测确认的档位）
+        - ``effortForceLevels``: 强制写出时使用的档位（默认 low/medium/high）
+        - ``effortOverrides``: ``{"模型id": ["low","high"]}``，优先级最高
+        """
+        config: Dict[str, Any] = {}
+        try:
+            loaded = manager.read_config(inst)
+            if isinstance(loaded, dict):
+                config = loaded
+        except Exception:
+            config = {}
+        policy = str(config.get("effortPolicy") or "force").strip().lower()
+        levels = config.get("effortForceLevels")
+        if not isinstance(levels, list) or not levels:
+            levels = list(DEFAULT_FORCE_LEVELS)
+        overrides = config.get("effortOverrides")
+        return {
+            "force": policy != "declared",
+            "levels": [str(level) for level in levels],
+            "overrides": overrides if isinstance(overrides, dict) else {},
+        }
+
+    def _model_efforts(self, model: Dict[str, Any], efforts: Optional[Dict[str, List[str]]],
+                       policy: Optional[Dict[str, Any]]) -> List[str]:
+        model_id = str(model.get("id") or "")
+        policy = policy or {}
+        override = (policy.get("overrides") or {}).get(model_id)
+        if isinstance(override, list):
+            wanted = {str(value) for value in override}
+            return [effort for effort in EFFORT_ORDER if effort in wanted]
+
+        reasoning = model.get("reasoning")
+        declared: List[str] = []
+        if isinstance(reasoning, dict):
+            values = reasoning.get("supportedEfforts")
+            if isinstance(values, list):
+                declared = [str(value) for value in values]
+        probed = list((efforts or {}).get(model_id) or [])
+        supported = [effort for effort in EFFORT_ORDER if effort in set(declared) | set(probed)]
+        if supported:
+            return supported
+
+        # 目录没声明、探测也没确认：默认强制写出三档，让选择器可用
+        # （用户在 WB 里能看到档位；代价是上游可能忽略该参数，见 README）
+        if policy.get("force") and isinstance(reasoning, dict) and reasoning.get("supports") is True:
+            forced = {level for level in policy.get("levels") or DEFAULT_FORCE_LEVELS}
+            return [effort for effort in EFFORT_ORDER if effort in forced]
+        return []
+
     def _render_models(self, models: List[Dict[str, Any]],
-                       efforts: Optional[Dict[str, List[str]]] = None) -> List[str]:
+                       efforts: Optional[Dict[str, List[str]]] = None,
+                       policy: Optional[Dict[str, Any]] = None) -> List[str]:
         lines: List[str] = ["        models:"]
         for model in models:
             model_id = str(model.get("id") or "")
@@ -181,17 +237,8 @@ class DshAdapter(HarnessAdapter):
                 lines.append(f"            maxTokens: {max_tokens}")
             lines.append("            input:")
             lines.append("              - text")
-            # 档位来源有两个，按并集声明：
-            #   1) 上游模型目录的 reasoning.supportedEfforts（权威，官方插件同源）；
-            #   2) `wbconnect probe --effort` 对"目录未声明"的模型做的试探（补充）。
-            declared: List[str] = []
-            reasoning = model.get("reasoning")
-            if isinstance(reasoning, dict):
-                values = reasoning.get("supportedEfforts")
-                if isinstance(values, list):
-                    declared = [str(value) for value in values]
-            probed = list((efforts or {}).get(model_id) or [])
-            supported = [effort for effort in EFFORT_ORDER if effort in set(declared) | set(probed)]
+            # 档位来源优先级：effortOverrides > 目录声明/探测结果 > 强制三档
+            supported = self._model_efforts(model, efforts, policy)
             if supported:
                 lines.append("            reasoningEfforts:")
                 for effort in supported:
@@ -204,7 +251,8 @@ class DshAdapter(HarnessAdapter):
 
     def _render_provider(self, key: str, base_url: str, token_env: str,
                          models: List[Dict[str, Any]],
-                         efforts: Optional[Dict[str, List[str]]] = None) -> List[str]:
+                         efforts: Optional[Dict[str, List[str]]] = None,
+                         policy: Optional[Dict[str, Any]] = None) -> List[str]:
         lines = [
             f"      {key}:",
             f"        displayName: {_yaml_str(DISPLAY_NAMES.get(key, key))}",
@@ -212,7 +260,7 @@ class DshAdapter(HarnessAdapter):
             "        api: openai-completions",
             f"        apiKeyEnv: {token_env}",
         ]
-        lines.extend(self._render_models(models, efforts))
+        lines.extend(self._render_models(models, efforts, policy))
         return lines
 
     def _render_block(self, providers: List[List[str]], disable_official: bool,
@@ -305,10 +353,11 @@ class DshAdapter(HarnessAdapter):
             if not models:
                 warnings.append(f"{inst.key}: 桥接没有可用模型，跳过")
                 continue
-            # 只读已探测的推理档位；没有就（继续）不声明，避免出现"选了没用"的假开关
+            # 探测缓存只是补充；目录声明与强制策略在 _model_efforts 里统一决定
             efforts = manager.read_effort_cache(inst) if hasattr(manager, "read_effort_cache") else {}
+            policy = self._effort_policy(manager, inst)
             providers.append(self._render_provider(
-                inst.key, endpoint["base_url"], inst.token_env, models, efforts,
+                inst.key, endpoint["base_url"], inst.token_env, models, efforts, policy,
             ))
             tokens[inst.token_env] = endpoint["token"]
         return providers, tokens, warnings

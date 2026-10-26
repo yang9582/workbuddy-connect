@@ -157,12 +157,18 @@ hermes workbuddy doctor
      Client 半注册到 `conversation.composer.dock`；点数字展开套餐余量与倍率，可手动刷新）；
   4. **设置 → 插件 → WorkBuddy 页**：账号、登录态、令牌有效期、积分与更新时间、
      套餐余量、全量模型表（上下文 / 倍率 / 促销）。
-- 推理档位来自两处**并集**：
-  1. 上游模型目录的 `reasoning.supportedEfforts`（权威，官方插件同源；实测国内版 10/19、
-     国际版 9/13 个模型有声明，例如 GLM-5.3 → low/high/max、space-bunny → 五档全开）；
-  2. `wbconnect probe --effort` 对**目录未声明**的模型做的试探：非法哨兵返回 400 才认为
-     上游真的校验该参数，再逐个测 `low/high/max`，结果缓存 7 天。
-  其余模型保持不声明——宁可没有开关，也不给"选了没用"的假档位。
+- 推理档位按优先级生成（`wbconnect dsh bundle` 时计算）：
+  1. `effortOverrides`：桥接配置里的 `{"模型id": ["low","high"]}`，最高优先；
+  2. 上游模型目录的 `reasoning.supportedEfforts`（权威，官方插件同源）；
+  3. `wbconnect probe --effort` 对目录未声明模型的试探结果（缓存 7 天）；
+  4. 以上都没有、但模型声明了 `reasoning.supports = true` → **默认强制写出 low/medium/high**，
+     让选择器可用。桥接配置 `effortPolicy: "declared"` 可关闭强制，`effortForceLevels` 可改档位。
+  实测：强制后国内版 **19/19**、国际版 **12/13** 个模型都有档位；唯一例外是没有 `reasoning`
+  字段的 `default-model`。
+  > 复核结论：hy3 / hy3-x / glm-5.2 / glm-5.1 / glm-5v-turbo / minimax-m3 / minimax-m2.7 /
+  > kimi-k3-1 / mimo-v2.6-pro 的目录里确实**没有** `supportedEfforts`，内核自带的
+  > `probeModel` 也把它们判为 `non-validating`（非法值被接受）。所以强制档位只保证"能选"，
+  > 上游是否据此改变推理深度取决于其实现。
 - 模型列表变化后重新生成：`wbconnect dsh bundle` → 重启 DSH。
 - 卸载 bundle 就等于移除 provider、卡片与设置页（bundle 是唯一来源）。
 
@@ -284,7 +290,7 @@ node 路径与 Hermes 桌面插件。
 | DSH 插件页看不到 workbuddy-connect | 它默认没装；`wbconnect dsh bundle` 生成包，再到 DSH 插件页安装本地包（装好是 `link:` 到仓库目录） |
 | 不确定哪一环坏了 | `wbconnect doctor --all`：逐项给出桥接/探测/provider/部署/harness 状态与修复命令 |
 | DSH 输入框下方没有积分卡片 | 卡片由 bundle 的 Client 半提供：确认插件页里 `workbuddy-connect` 已启用；用 `curl http://127.0.0.1:<DSH端口>/workbuddy/status` 确认 Host 半就绪；必要时 disable→enable 该插件或重启 DSH |
-| DSH 模型选择器里没有推理档位 | 只有被探测确认支持 `reasoning_effort` 的模型才会出现档位：先 `wbconnect probe --effort`，再 `wbconnect dsh bundle`，最后重启 DSH |
+| DSH 模型选择器里没有推理档位 | 默认会强制写出 low/medium/high；若仍没有，检查桥接配置是不是 `effortPolicy: "declared"`、模型是否有 `reasoning` 字段；改完 `wbconnect dsh bundle` 并重启 DSH |
 | 401 | 目标 profile 的 `.env` 缺令牌：`hermes workbuddy sync --profiles <名字>`；DSH 则是 `~/.dsh/.env` 缺令牌，重跑 `install --harness dsh` |
 
 ## 9. 开发与验证
