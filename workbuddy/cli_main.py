@@ -157,6 +157,7 @@ def main(argv: List[str] | None = None) -> int:
     dsh = sub.add_parser("dsh", help="DeepSeek Harness 集成维护")
     dsh_sub = dsh.add_subparsers(dest="dsh_cmd")
     dsh_sub.add_parser("status", help="各 profile 的接入状态（只读）")
+    dsh_sub.add_parser("bundle", help="生成/刷新 DSH bundle 包（dsh/workbuddy-connect/）")
     dsh_sub.add_parser("restore", help="把旧版补丁改过的官方插件恢复为原版")
 
     args = parser.parse_args(argv)
@@ -234,6 +235,9 @@ def main(argv: List[str] | None = None) -> int:
         action = getattr(args, "dsh_cmd", None) or "status"
         if action == "restore":
             for line in adapter.restore_legacy():
+                print(line)
+        elif action == "bundle":
+            for line in adapter.write_bundle(manager):
                 print(line)
         else:
             print(json.dumps(adapter.status(), ensure_ascii=False, indent=2))

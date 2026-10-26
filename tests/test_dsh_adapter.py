@@ -129,5 +129,56 @@ class DshEnvTests(unittest.TestCase):
         self.assertEqual(self.adapter._write_env({"WORKBUDDY_BRIDGE_TOKEN": "same"}), [])
 
 
+class DshBundleTests(unittest.TestCase):
+    """DSH bundle 包：清单格式、patch 内容、安装后的路由。"""
+
+    def setUp(self) -> None:
+        self.tmp = TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        patcher = mock.patch.dict(os.environ, {"DSH_HOME": str(Path(self.tmp.name) / "dsh")})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.adapter = DshAdapter()
+        self.bundle = Path(self.tmp.name) / "bundle"
+        mock.patch.object(self.adapter, "bundle_dir", return_value=self.bundle).start()
+        self.addCleanup(mock.patch.stopall)
+
+    def _providers(self):
+        return [self.adapter._render_provider(
+            "workbuddy", "http://127.0.0.1:39621/v1", "WORKBUDDY_BRIDGE_TOKEN", MODELS,
+        )]
+
+    def test_writes_manifest_and_valid_patch(self) -> None:
+        import json
+
+        with mock.patch.object(self.adapter, "_collect", return_value=(self._providers(), {"T": "v"}, [])):
+            lines = self.adapter.write_bundle(manager=None)
+
+        self.assertTrue(self.bundle.is_dir())
+        manifest = json.loads((self.bundle / "package.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["name"], "workbuddy-connect")
+        self.assertEqual(manifest["dsh"]["bundle"]["patch"], "./cordis.patch.yml")
+
+        if yaml is None:
+            self.skipTest("PyYAML 不可用")
+        data = yaml.safe_load((self.bundle / "cordis.patch.yml").read_text(encoding="utf-8"))
+        # 临时 DSH_HOME 里没有官方插件，因此不写 llm-workbuddy 关闭行
+        self.assertEqual([row["id"] for row in data], ["llm-pi-ai"])
+        self.assertIn("已生成 bundle", lines[0])
+
+    def test_no_providers_is_an_error_not_a_write(self) -> None:
+        with mock.patch.object(self.adapter, "_collect", return_value=([], {}, ["桥接未启动"])):
+            lines = self.adapter.write_bundle(manager=None)
+        self.assertIn("没有可写入的 provider", lines[0])
+        self.assertFalse(self.bundle.exists())
+
+    def test_install_prefers_bundle_when_installed(self) -> None:
+        with mock.patch.object(self.adapter, "bundle_installed", return_value=True), \
+             mock.patch.object(self.adapter, "write_bundle", return_value=["refreshed"]) as write:
+            lines = self.adapter.install(manager=None)
+        write.assert_called_once()
+        self.assertIn("refreshed", lines)
+
+
 if __name__ == "__main__":
     unittest.main()

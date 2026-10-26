@@ -47,6 +47,7 @@ workbuddy-connect/
 │   ├── vendor/host-bundle.js # dsh-workbuddy-connect 0.7.9 内核（MIT）
 │   └── node_modules/@deepseek-ai/*   # 两个最小替身包
 ├── desktop/plugin.js         # Hermes 桌面 UI（积分徽章 / 倍率 / pill / 设置页）
+├── dsh/workbuddy-connect/    # DSH bundle：只有 package.json + 声明式 cordis.patch.yml
 ├── vendor/dsh-workbuddy-connect/  # 0.7.9 原版（内核来源 + 旧补丁恢复用）
 ├── tests/                    # Python unittest（service / sync / dsh / kernel）
 └── scripts/install.py / uninstall.py / patch_dsh_plugin.py（已弃用，转为恢复工具）
@@ -135,21 +136,36 @@ hermes workbuddy doctor
   需在其设置里手动添加「OpenAI 兼容 provider」（base_url / api_key / 模型）。
 
 ### DeepSeek Harness
-- `python -m workbuddy.cli_main install --harness dsh` 会在每个 profile 的
-  `cordis.patch.yml` 末尾追加一段受管配置：
-  - `llm-pi-ai.providers.workbuddy` / `workbuddy-ai` → `http://127.0.0.1:3962x/v1`，
-    `api: openai-completions`，模型列表来自桥接 `/v1/models`（静态声明）；
-  - `llm-workbuddy.disabled: true`（仅当该 profile 装了官方插件时写），避免同一批模型出现两组。
+两种接入形态，**装过 bundle 后以 bundle 为准**。
+
+**A. bundle（推荐，会出现在 DSH 的「插件」页）**
+- 包在 `dsh/workbuddy-connect/`：只有 `package.json` + 声明式 `cordis.patch.yml`，
+  **没有可执行代码**，因此不存在"插件代码与 DSH 版本耦合"的问题。
+- 安装：在 DSH 的「插件」页安装本地包（指向该目录），或用 DSH 的
+  `plugin_manager` `install_bundle`。装好后 DSH 记一条 `workbuddy-connect@2.1.0`
+  （`source: link:…`），可启用/停用/卸载。
+- 它做两件事：给 `llm-pi-ai` 加两个 provider；把官方插件 `llm-workbuddy` 关掉（装了才写）。
+- 模型列表变化后重新生成：`wbconnect dsh bundle` → 重启 DSH。
+- 卸载 bundle 就等于移除这两个 provider（bundle 是唯一来源）。
+
+**B. profile patch（没装 bundle 时的兜底）**
+- `wbconnect install --harness dsh` 往各 profile 的 `cordis.patch.yml` 追加同样的受管块，
+  适合不想动插件列表的场景；`wbconnect uninstall --harness dsh` 移除。
+
+共同点：
+- provider 指向 `http://127.0.0.1:3962x/v1`，`api: openai-completions`，
+  模型列表来自桥接 `/v1/models`（静态声明）。
 - 令牌写入 `~/.dsh/.env` 的 `WORKBUDDY_BRIDGE_TOKEN` / `WORKBUDDY_AI_BRIDGE_TOKEN`
   （DSH 启动时会加载该文件，pi-ai 的 `apiKeyEnv` 从这里取值）。
 - **重启 DSH 后生效**：模型选择器里出现 WorkBuddy / WorkBuddy AI 分组。
 - **不再修改 `~/.dsh/profiles/*/node_modules`**。2.1 之前的历史版本给官方插件打过补丁，
   那些文件是 pnpm 全局 store 的硬链接，原地改写会污染 store；用
-  `python -m workbuddy.cli_main dsh restore` 可恢复成 `vendor/` 里的原版（先删后拷，断开硬链接）。
-- 回滚：`wbconnect uninstall --harness dsh` 移除受管配置；`.workbuddy-backup` 是写入前的备份。
+  `wbconnect dsh restore` 可恢复成 `vendor/` 里的原版（先删后拷，断开硬链接）。
+- 官方 `dsh-workbuddy-connect@0.7.9` 可以卸载：它要求 DSH `0.2.1-rc.2`，在 `rc.3` 上
+  插件页会标 `incompatible-version`。卸载后重跑 `wbconnect dsh bundle` 可去掉关闭行。
 - 离线校验（不启动 DSH）：
   ```
-  "D:\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd" --profile web --dump-config
+  "D:\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd" --profile web --patch dsh\workbuddy-connect\cordis.patch.yml --dump-config
   ```
 
 ### 豆包 / 其它
@@ -169,7 +185,7 @@ hermes workbuddy doctor
 | `uninstall --harness …` | 移除配置 |
 | `harnesses` | 列出支持的 harness 与检测结果 |
 | `kernel [--refresh]` | 查看桥接内核来源；`--refresh` 从已安装插件重新提取并验证导出 |
-| `dsh [status\|restore]` | DSH 接入状态；把旧版补丁改过的插件文件恢复原版 |
+| `dsh [status\|bundle\|restore]` | DSH 接入状态；生成/刷新 bundle 包；恢复旧补丁改过的插件文件 |
 | `doctor` / `logs` | 自检 / 日志 |
 
 Hermes 内另有 `/workbuddy status|start|stop|sync|logs` 斜杠命令。
@@ -217,7 +233,8 @@ Hermes 内另有 `/workbuddy status|start|stop|sync|logs` 斜杠命令。
 | Claude Code 报 unknown model | 适配器写入的是 `claude-sonnet-4-5` 等别名，桥接负责映射；重启 Claude Code 会话 |
 | Codex 里没有 workbuddy | `codex --profile workbuddy`；确认 `~/.codex/config.toml` 里有受管理块 |
 | Hermes 工具没出现 | 插件是否在该 profile 启用；`hermes plugins list` |
-| DSH 模型选择器里没有 WorkBuddy 分组 | 先重启 DSH；再看 `wbconnect dsh status`（`managed: true`）；`~/.dsh/.env` 里要有 `WORKBUDDY_BRIDGE_TOKEN`；桥接需在跑（`wbconnect start`） |
+| DSH 模型选择器里没有 WorkBuddy 分组 | 先重启 DSH；`wbconnect dsh status` 看 `mode`（`bundle` / `profile-patch`）；`~/.dsh/.env` 里要有 `WORKBUDDY_BRIDGE_TOKEN`；桥接需在跑（`wbconnect start`） |
+| DSH 插件页看不到 workbuddy-connect | 它默认没装；`wbconnect dsh bundle` 生成包，再到 DSH 插件页安装本地包（装好是 `link:` 到仓库目录） |
 | 401 | 目标 profile 的 `.env` 缺令牌：`hermes workbuddy sync --profiles <名字>`；DSH 则是 `~/.dsh/.env` 缺令牌，重跑 `install --harness dsh` |
 
 ## 9. 开发与验证

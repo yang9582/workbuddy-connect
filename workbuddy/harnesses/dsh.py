@@ -39,6 +39,9 @@ END = "# <<< workbuddy-connect (managed) <<<"
 MANAGED_MARKERS = (BEGIN, END)
 PATCH_FILENAME = "cordis.patch.yml"
 PLUGIN_PACKAGE = "dsh-workbuddy-connect"
+# 我们自己的 DSH bundle 包（只含声明式 patch，没有可执行代码）
+BUNDLE_PACKAGE = "workbuddy-connect"
+BUNDLE_SUBDIR = Path("dsh") / BUNDLE_PACKAGE
 
 # 与桥接 server.mjs 的 prepareChatBody / pi-ai 适配相关的兼容开关。
 # 桥接是标准 OpenAI chat completions（max_tokens、system 角色、finish_reason），
@@ -63,7 +66,7 @@ def _yaml_str(value: str) -> str:
 class DshAdapter(HarnessAdapter):
     name = "dsh"
     label = "DeepSeek Harness"
-    note = "写入 profile 的 cordis.patch.yml；重启 DSH 后生效"
+    note = "bundle 装进 DSH 插件页后由 DSH 管理；未装 bundle 时退回写 profile 的 cordis.patch.yml"
 
     # ── 路径 ────────────────────────────────────────────────
     @property
@@ -142,7 +145,14 @@ class DshAdapter(HarnessAdapter):
         info.update({
             "home": str(self.dsh_home),
             "profiles": rows,
-            "configured": any(row["managed"] for row in rows),
+            "bundle": {
+                "installed": self.bundle_installed(),
+                "package": BUNDLE_PACKAGE,
+                "path": str(self.bundle_dir()),
+                "patch": str(self.bundle_dir() / PATCH_FILENAME),
+            },
+            "mode": "bundle" if self.bundle_installed() else ("profile-patch" if any(row["managed"] for row in rows) else "not-configured"),
+            "configured": self.bundle_installed() or any(row["managed"] for row in rows),
             "legacy_patched": [f"{row['profile']}:{p}" for row in rows for p in row["legacy_patched"]],
         })
         return info
@@ -271,7 +281,61 @@ class DshAdapter(HarnessAdapter):
             tokens[inst.token_env] = endpoint["token"]
         return providers, tokens, warnings
 
+    def bundle_dir(self) -> Path:
+        """仓库里的 DSH bundle 包目录（`dsh/workbuddy-connect/`）。"""
+        return self.repo_root() / BUNDLE_SUBDIR
+
+    def bundle_installed(self) -> bool:
+        """bundle 是否已被 DSH 装进某个 profile。"""
+        return any(
+            (profile / "node_modules" / BUNDLE_PACKAGE).exists()
+            for profile in self.profiles()
+        )
+
+    def _bundle_manifest(self) -> Dict[str, Any]:
+        return {
+            "name": BUNDLE_PACKAGE,
+            "version": "2.1.0",
+            "private": True,
+            "type": "module",
+            "description": (
+                "WorkBuddy 桌面 App 的模型接入 DeepSeek Harness：把本机 workbuddy-connect 桥接"
+                "注册成 OpenAI 兼容 provider。纯声明式 patch，无运行时代码。"
+            ),
+            "dsh": {"bundle": {"patch": f"./{PATCH_FILENAME}"}},
+        }
+
+    def write_bundle(self, manager) -> List[str]:
+        """生成/刷新 bundle 包（package.json + 声明式 cordis.patch.yml）。"""
+        providers, _tokens, warnings = self._collect(manager)
+        if not providers:
+            return ["没有可写入的 provider：" + ("; ".join(warnings) or "桥接未启动")]
+        target = self.bundle_dir()
+        target.mkdir(parents=True, exist_ok=True)
+        (target / "package.json").write_text(
+            json.dumps(self._bundle_manifest(), ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        disable_official = any(
+            (profile / "node_modules" / PLUGIN_PACKAGE).is_dir() for profile in self.profiles()
+        )
+        (target / PATCH_FILENAME).write_text(
+            self._render_block(providers, disable_official), encoding="utf-8",
+        )
+        lines = [f"已生成 bundle：{target}"]
+        if warnings:
+            lines.extend(f"提示: {w}" for w in warnings)
+        return lines
+
     def install(self, manager, *, profiles: str = "", dry_run: bool = False) -> List[str]:
+        # 一旦 bundle 已安装，就以 bundle 为准：只刷新它的 patch，不再往 profile 写第二份
+        if self.bundle_installed() and not profiles:
+            if dry_run:
+                return [f"将刷新 bundle patch：{self.bundle_dir() / PATCH_FILENAME}"]
+            lines = self.write_bundle(manager)
+            lines.append("DSH 需要重新加载该 bundle（重启）后才会用上新模型列表")
+            return lines
+
         targets = self._targets(profiles)
         if not targets:
             return [f"没有找到 DSH profile（{self.dsh_home / 'profiles'}）"]
