@@ -43,6 +43,7 @@ import { sanitizeSystemText } from "./lib/system-text.mjs";
 import { corsHeadersFor } from "./lib/cors.mjs";
 import { assembleCompletion } from "./lib/assemble.mjs";
 import { hasImageParts } from "./lib/content.mjs";
+import { sanitizeReasoning } from "./lib/model-view.mjs";
 import { loadDshEnv } from "./lib/dsh-env.mjs";
 
 // 与 DSH 插件同源的 WORKBUDDY* 变量（Electron 二进制路径等）先加载，
@@ -215,6 +216,8 @@ function displayRows(now = Date.now()) {
       badges: Array.isArray(live.billing?.badges) ? live.billing.badges : [],
       free: live.billing?.free === true,
       rateUnknown: live.billing?.rateUnknown === true,
+      // 上游声明的推理档位（supportedEfforts 是权威来源，不要用请求试探替代）
+      reasoning: sanitizeReasoning(live.reasoning),
     };
   });
 }
@@ -444,11 +447,12 @@ async function handle(req, res) {
           name: model.name,
           context_length: model.contextWindow ?? undefined,
           max_tokens: model.maxTokens ?? undefined,
-          // 非标准扩展字段：倍率 / 促销徽章（Hermes 忽略，插件与脚本使用）
+          // 非标准扩展字段：倍率 / 促销徽章 / 推理档位声明（Hermes 忽略，插件与脚本使用）
           multiplier: model.multiplier ?? undefined,
           badges: model.badges.length > 0 ? model.badges : undefined,
           free: model.free,
           rate_unknown: model.rateUnknown || undefined,
+          reasoning: model.reasoning ?? undefined,
         })),
       });
       return;

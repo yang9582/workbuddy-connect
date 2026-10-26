@@ -229,12 +229,32 @@ class DshEffortRenderingTests(unittest.TestCase):
         self.addCleanup(patcher.stop)
         self.adapter = DshAdapter()
 
-    def _render(self, efforts):
+    def _render(self, efforts, model=None):
+        row = model or {"id": "deepseek-v4.1-flash", "context_length": 1000000}
         provider = self.adapter._render_provider(
-            "workbuddy", "http://127.0.0.1:39621/v1", "TOKEN",
-            [{"id": "deepseek-v4.1-flash", "context_length": 1000000}], efforts,
+            "workbuddy", "http://127.0.0.1:39621/v1", "TOKEN", [row], efforts,
         )
         return "\n".join(provider)
+
+    def test_catalog_declaration_is_enough_without_probe(self) -> None:
+        row = {"id": "glm-5.3", "reasoning": {"supports": True, "supportedEfforts": ["low", "high", "max"]}}
+        text = self._render({}, row)
+        self.assertIn("reasoningEfforts:", text)
+        self.assertIn("low: 'low'", text)
+        self.assertIn("max: 'max'", text)
+
+    def test_catalog_and_probe_are_merged_in_canonical_order(self) -> None:
+        row = {"id": "x", "reasoning": {"supports": True, "supportedEfforts": ["high"]}}
+        text = self._render({"x": ["low", "max"]}, row)
+        block = text.split("reasoningEfforts:")[1].split("compat:")[0]
+        positions = [block.index(f"{effort}:") for effort in ("low", "high", "max")]
+        self.assertEqual(positions, sorted(positions), "档位必须按 low→high→max 排列")
+
+    def test_unknown_catalog_efforts_are_dropped(self) -> None:
+        row = {"id": "x", "reasoning": {"supports": True, "supportedEfforts": ["banana", "high"]}}
+        text = self._render({}, row)
+        self.assertIn("high: 'high'", text)
+        self.assertNotIn("banana", text)
 
     def test_declares_only_supported_efforts(self) -> None:
         text = self._render({"deepseek-v4.1-flash": ["low", "high", "max"]})

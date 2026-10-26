@@ -57,8 +57,9 @@ MODEL_COMPAT = {
 
 DISPLAY_NAMES = {"workbuddy": "WorkBuddy", "workbuddy-ai": "WorkBuddy AI"}
 
-# pi-ai 接受的档位名（与 llm-pi-ai 的 schema 一致）
-EFFORT_KEYS = {"off", "minimal", "low", "medium", "high", "xhigh", "max"}
+# pi-ai 接受的档位名（与 llm-pi-ai 的 schema 一致），顺序即 UI 里的排列
+EFFORT_ORDER = ("off", "minimal", "low", "medium", "high", "xhigh", "max")
+EFFORT_KEYS = set(EFFORT_ORDER)
 
 
 def _yaml_str(value: str) -> str:
@@ -180,8 +181,17 @@ class DshAdapter(HarnessAdapter):
                 lines.append(f"            maxTokens: {max_tokens}")
             lines.append("            input:")
             lines.append("              - text")
-            # 只声明被上游真正校验并接受的档位（wbconnect probe --effort 的结果）
-            supported = [e for e in (efforts or {}).get(model_id) or [] if e in EFFORT_KEYS]
+            # 档位来源有两个，按并集声明：
+            #   1) 上游模型目录的 reasoning.supportedEfforts（权威，官方插件同源）；
+            #   2) `wbconnect probe --effort` 对"目录未声明"的模型做的试探（补充）。
+            declared: List[str] = []
+            reasoning = model.get("reasoning")
+            if isinstance(reasoning, dict):
+                values = reasoning.get("supportedEfforts")
+                if isinstance(values, list):
+                    declared = [str(value) for value in values]
+            probed = list((efforts or {}).get(model_id) or [])
+            supported = [effort for effort in EFFORT_ORDER if effort in set(declared) | set(probed)]
             if supported:
                 lines.append("            reasoningEfforts:")
                 for effort in supported:

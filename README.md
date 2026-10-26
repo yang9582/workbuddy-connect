@@ -157,10 +157,12 @@ hermes workbuddy doctor
      Client 半注册到 `conversation.composer.dock`；点数字展开套餐余量与倍率，可手动刷新）；
   4. **设置 → 插件 → WorkBuddy 页**：账号、登录态、令牌有效期、积分与更新时间、
      套餐余量、全量模型表（上下文 / 倍率 / 促销）。
-- 推理档位只声明**被上游校验并接受**的：`wbconnect probe --effort` 先用非法哨兵值试探
-  （上游若返回 400 说明它真的校验该参数），再逐个测试 `low/high/max`，结果缓存 7 天；
-  `wbconnect dsh bundle` 只为这些模型写 `reasoningEfforts`，其余保持不声明——
-  宁可没有开关，也不给"选了没用"的假档位。实测国内版 2/19、国际版 2/26 个模型支持。
+- 推理档位来自两处**并集**：
+  1. 上游模型目录的 `reasoning.supportedEfforts`（权威，官方插件同源；实测国内版 10/19、
+     国际版 9/13 个模型有声明，例如 GLM-5.3 → low/high/max、space-bunny → 五档全开）；
+  2. `wbconnect probe --effort` 对**目录未声明**的模型做的试探：非法哨兵返回 400 才认为
+     上游真的校验该参数，再逐个测 `low/high/max`，结果缓存 7 天。
+  其余模型保持不声明——宁可没有开关，也不给"选了没用"的假档位。
 - 模型列表变化后重新生成：`wbconnect dsh bundle` → 重启 DSH。
 - 卸载 bundle 就等于移除 provider、卡片与设置页（bundle 是唯一来源）。
 
