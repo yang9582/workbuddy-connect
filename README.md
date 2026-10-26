@@ -42,13 +42,15 @@
 | **本地优先** | 只监听 `127.0.0.1`，Bearer 鉴权（同时接受 `x-api-key`），CORS 只对本地来源回发；没有任何第三方服务器中转。 |
 | **坏了自己说** | `wbconnect doctor --all` 一次列出桥接/探测/provider/部署/harness 每一环的状态与修复命令；内核契约守卫在导出缺失时给可读错误而不是 `SyntaxError`；同步失败会回滚半写入的 provider；日志超过 5MB 自动轮转。 |
 
-## 🖼️ 截图
+## 🖼️ 界面预览
 
-![WorkBuddy Connect 界面预览 1](docs/screenshots/preview-1.png)
-![WorkBuddy Connect 界面预览 2](docs/screenshots/preview-2.png)
-
-> 还缺一张"输入框工具行左侧的积分条 + 模型名后倍率"的横图，建议补到
-> `docs/screenshots/composer-credits.png`（宽图），这张最能说明亮点。
+<p align="center">
+  <img src="docs/screenshots/preview-3.png" alt="WorkBuddy Connect 在 DSH 中的界面" width="720" />
+</p>
+<p align="center">
+  <img src="docs/screenshots/preview-1.png" alt="WorkBuddy Connect 在 DSH 中的界面" width="240" />
+  <img src="docs/screenshots/preview-2.png" alt="WorkBuddy Connect 在 DSH 中的界面" width="240" />
+</p>
 
 ## 🧭 工作原理
 
