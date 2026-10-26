@@ -13,6 +13,12 @@ Hermes Agent、Claude Code、Codex CLI、OpenClaw、DeepSeek Harness（DSH）共
 > English TL;DR: A local OpenAI/Anthropic-compatible bridge that exposes WorkBuddy desktop models
 > to Hermes, Claude Code, Codex, OpenClaw and DeepSeek Harness — with a DSH plugin that shows
 > live credits, per-model rate multipliers, and uses the largest context window by default.
+>
+> Highlights: largest context window by default (up to 1M) · live credits & rate multipliers in
+> the DSH composer and model menu · one bridge for five harnesses · reasoning-effort tiers filled
+> in automatically · account-level model probing (skips `11158`) · fingerprint workarounds for the
+> CN upstream (`11128`) in one place · loopback-only with Bearer auth · `doctor --all` end-to-end
+> self-check.
 
 ---
 
@@ -260,11 +266,32 @@ vendor/               第三方内核与离线包（见 THIRD_PARTY_NOTICES.txt�
 tests/                单元测试（标准库 unittest，无第三方依赖）
 ```
 
+## 🆚 和直接用 dsh-workbuddy-connect 的区别
+
+[dsh-workbuddy-connect](https://github.com/corrinehu/dsh-workbuddy-connect) 是一个优秀的 DSH 插件，
+功能比本项目更全（模型显隐、企业额度、图片输入等）。两者的定位不同：
+
+| | dsh-workbuddy-connect | 本项目 |
+|---|---|---|
+| 目标 harness | 只有 DSH | Hermes / Claude Code / Codex / OpenClaw / DSH |
+| DSH 接入方式 | 插件（peerDependencies 精确绑定内核版本） | 声明式 bundle（只依赖 `llm-pi-ai` 配置），可随时 `dsh bundle` 重生成 |
+| 升级 DSH 内核 | 需要匹配的插件版本 | 只有桥接内核需要跟（`kernel --refresh` + 契约守卫） |
+| 积分/倍率展示 | DSH 内卡片 | DSH 卡片 + 菜单倍率 + Hermes 桌面 UI |
+| 上下文窗口 | 国际版提供开关 | 默认取最大，可按模型覆盖（`contextWindowOverrides`） |
+| 排障 | 插件自带 doctor | `doctor --all` 覆盖桥接 → provider → 各 harness 整条链路 |
+
+如果你只用 DSH、且想要最全的插件内功能，直接用上游插件更省事；如果你要跨 harness 复用、
+或者希望"DSH 升级不用等插件适配"，本项目更合适。
+
 ## ⚠️ 限制与免责声明
 
 - **非官方项目**：与 WorkBuddy / 腾讯 / DeepSeek 均无关联，未获其背书。
 - **依赖非公开接口**：桥接复用 WorkBuddy 桌面客户端的登录态与私有 API，**客户端大版本更新后
   可能失效**，届时需要更新 `bridge/vendor/host-bundle.js`（`wbconnect kernel --refresh`）。
+- **图片输入不完整**：OpenAI 路径原样转发（看模型是否支持）；Anthropic 路径会把图片替换成
+  文本占位，Claude Code 粘贴截图不会真的送图。
+- **DSH 里没有"模型显隐/窗口下拉"**：这两项依赖 DSH 插件把 provider 程序化注册，本项目为了
+  避开版本耦合只做配置化 + 设置页展示。
 - **个人使用定位**：请自行确认符合 WorkBuddy 的服务条款与所在地区法规；不要用于商业转售、
   账号共享或任何规避计费的行为。本项目不提供、也不存储任何账号凭据。
 - **凭据在本机**：本地令牌与 WorkBuddy 登录态保存在你自己的数据目录里（明文文件），
