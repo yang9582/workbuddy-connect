@@ -29,7 +29,7 @@ Hermes Agent、Claude Code、Codex CLI、OpenClaw、DeepSeek Harness（DSH）共
 | 亮点 | 说明 |
 |---|---|
 | **上下文窗口默认拉满** | 国际版模型目录里的 `200K / 300K` 只是**默认值**，实际可选到 `1M`（`supportedContextWindows`，实测 11 个模型受益）。本插件默认取**可选最大值**，例如 `hy4-preview` 从 200K → 1M；也可以按模型精确指定（`contextWindowOverrides`），或退回上游默认（`contextWindowPolicy: "default"`）。 |
-| **剩余积分贴在模型名左边** | 输入框工具行最左侧、与模型选择器同一水平线显示 `WB 1,791 · WB AI 189`，悬停看各套餐余量，旁边 `↻` 手动刷新。**仅当当前会话选中 WorkBuddy / WorkBuddy AI 模型时才出现**；用别的模型时这一行完全不占位、也不会发请求。积分不做轮询（每次查询都会真实打到计费接口）。 |
+| **剩余积分贴在模型名左边** | 输入框工具行最左侧、与模型选择器同一水平线显示 `WB 1,791 · WB AI 189`，悬停看各套餐余量，旁边 `↻` 手动刷新。**仅当当前会话选中 WorkBuddy / WorkBuddy AI 模型时才出现**，换其它模型这一行不占位；但数据仍然在加载时取一次（菜单里 WB 模型行的倍率要用），积分不做轮询。 |
 | **模型菜单直接标倍率** | 模型选择器里每一行都显示 `· x0.11 · 夜间折扣`，触发器和菜单当前值同样生效——选模型前就知道这模型贵不贵。 |
 | **设置页一张表看全** | 设置 → 插件 → WorkBuddy：账号、登录态、令牌有效期、积分与更新时间、套餐余量、全量模型表（上下文 / 倍率 / 促销）。 |
 | **一套桥接，五种 harness** | Hermes 原生插件、Claude Code（Anthropic `/v1/messages`）、Codex CLI、OpenClaw、DSH；外加任何支持自定义 OpenAI 兼容端点的产品（豆包等）。 |

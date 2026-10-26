@@ -124,6 +124,7 @@ window.__ModuleLoader__.load({
           } catch { /* 诊断尽力而为 */ }
         } catch (failure) {
           store.error = String((failure && failure.message) || failure).slice(0, 160);
+          try { postBeacon(null, { failure: store.error }); } catch { /* 诊断尽力而为 */ }
         } finally {
           store.busy = false;
           // 失败不算"已加载"：否则一次 404 会让后续挂载都不再重试（Host 半重启后会一直空白）
@@ -294,7 +295,13 @@ window.__ModuleLoader__.load({
      */
     function ModelLabel(props) {
       // hooks 必须无条件按同一顺序调用，否则 provider 切换时会触发 hook 顺序错误
-      useStore(false);
+      // 只读缓存 + 失败自动重试：菜单里的模型行始终能拿到倍率，即使当前选中的不是 WB 模型
+      const state = useStore(false);
+      React.useEffect(() => {
+        if (state.error === '' || state.busy || retryBudget <= 0) return;
+        retryBudget -= 1;
+        void refresh(false);
+      }, [state.error, state.busy]);
       const placement = props && props.placement;
       const labelProvider = props && props.provider ? String(props.provider.id || '') : '';
       const labelSession = props && props.sessionId;
@@ -333,18 +340,12 @@ window.__ModuleLoader__.load({
     };
 
     /** 注册在 conversation.input.left：与模型选择器同一行、位于其左侧。
-     *  只在该会话选中 WorkBuddy / WorkBuddy AI 模型时渲染，其它模型下完全不占位、也不发请求。 */
+     *  只在该会话选中 WorkBuddy / WorkBuddy AI 模型时渲染，其它模型下不占位。
+     *  注意：数据不是在这里取的（菜单里的倍率装饰也需要数据），重试由 ModelLabel 负责。 */
     function ComposerCredits(props) {
       const providerId = useCurrentProvider(props && props.sessionId);
       const isWorkbuddy = PROVIDERS.has(providerId || '');
-      const state = useStore(isWorkbuddy);
-      // 拿不到数据时有限次自动重试：Host 半重启后不必让用户手动刷新
-      React.useEffect(() => {
-        if (!isWorkbuddy) return;
-        if (state.error === '' || state.busy || retryBudget <= 0) return;
-        retryBudget -= 1;
-        void refresh(false);
-      }, [isWorkbuddy, state.error, state.busy]);
+      const state = useStore(false);
       if (!isWorkbuddy) return null;
       const variants = state.data && Array.isArray(state.data.variants) ? state.data.variants : [];
       if (variants.length === 0) return null;
@@ -488,7 +489,7 @@ window.__ModuleLoader__.load({
     }
 
     // ─────────────────────────── 装配 ───────────────────────────
-    const BUILD = '2.1.0+wb-only-credits';
+    const BUILD = '2.1.0+always-fetch';
     let activeLocale = 'en';
 
     function registerLocale(ctx) {
@@ -562,8 +563,10 @@ window.__ModuleLoader__.load({
         inject('settings.plugins.tab', { id: 'workbuddy', order: 20, label: 'WorkBuddy' }, SettingsPage);
         inject('conversation.input.model.label', {}, ModelLabel);
 
-        // 不在这里预取：只有当前会话选中 WorkBuddy 模型（积分条渲染）或打开设置页时才请求，
-        // 其它模型下完全不碰 /workbuddy/status。
+        // 启动时取一次数据：模型菜单里的倍率装饰需要它，即使当前选中的不是 WorkBuddy 模型
+        // （菜单里照样列着 WB 的模型，那些行应该显示倍率）。
+        // 积分条的显隐与此无关：那是按"当前会话模型"判断的，见 ComposerCredits。
+        void refresh(false);
         lastReport = report;
         // 延迟一拍，等 inject 的延迟回调跑完再自报
         setTimeout(() => postBeacon(report), 0);

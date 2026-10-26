@@ -108,9 +108,9 @@ test("apply 注册三个插槽、注册 locale 字典并回报 beacon", async ()
   assert.deepEqual(payload.slots.map((entry) => entry.slot).sort(), slots);
   assert.ok(payload.slots.every((entry) => entry.registered === true), JSON.stringify(payload.slots));
 
-  // 不在 apply 时预取：只有选中 WorkBuddy 模型（或打开设置页）才请求 /workbuddy/status
+  // 启动时取一次：模型菜单里的倍率装饰需要数据，哪怕当前选中的不是 WB 模型
   const statusCalls = calls.filter((call) => String(call.url).includes("/workbuddy/status"));
-  assert.deepEqual(statusCalls, [], "apply 阶段不应请求 /workbuddy/status");
+  assert.equal(statusCalls.length, 1, "apply 阶段应请求一次 /workbuddy/status");
 });
 
 test("单个插槽注册失败时不影响其它插槽", async () => {
