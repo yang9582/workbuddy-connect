@@ -33,6 +33,9 @@ window.__ModuleLoader__.load({
       signIn: 'Sign-in',
       tokenExpiry: 'Token expires',
       catalog: 'Model catalog',
+      contextPolicy: 'Context policy',
+      contextPolicyMax: 'Use the largest available window',
+      contextPolicyDefault: 'Use the upstream default window',
       creditsUpdated: 'Credits updated',
       packages: 'Plan balance',
       allModels: 'All models',
@@ -62,6 +65,9 @@ window.__ModuleLoader__.load({
       signIn: '登录态',
       tokenExpiry: '令牌有效期',
       catalog: '模型目录',
+      contextPolicy: '上下文策略',
+      contextPolicyMax: '使用可选最大窗口',
+      contextPolicyDefault: '使用上游默认窗口',
       creditsUpdated: '积分更新',
       packages: '套餐余量',
       allModels: '全部模型',
@@ -317,7 +323,14 @@ window.__ModuleLoader__.load({
     }
 
     // ─────────────────────────── 设置页 ───────────────────────────
-    function ModelTable({ models }) {
+    function ModelTable({ models, policy }) {
+      const contextCell = (model) => {
+        const choices = Array.isArray(model.supportedContextWindows) ? model.supportedContextWindows : [];
+        if (choices.length < 2) return contextText(model.contextWindow);
+        const options = choices.map((value) => contextText(value)).join(' / ');
+        const effective = policy === 'max' ? Math.max(...choices) : model.contextWindow;
+        return `${contextText(effective)}（${options}）`;
+      };
       return h('div', { style: style.scroll }, [
         h('div', { key: 'head', style: Object.assign({}, style.grid, style.gridHead) }, [
           h('span', { key: 'n' }, t('model', '模型')),
@@ -327,7 +340,7 @@ window.__ModuleLoader__.load({
         ]),
         ...models.map((model) => h('div', { key: model.id, style: style.grid }, [
           h('span', { key: 'n', style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: model.id }, model.name || model.id),
-          h('span', { key: 'c', style: style.muted }, contextText(model.contextWindow)),
+          h('span', { key: 'c', style: style.muted }, contextCell(model)),
           h('span', { key: 'r' }, rateText(model) || '—'),
           h('span', { key: 'b', style: style.muted }, (model.badges || []).join(' / ')),
         ])),
@@ -363,6 +376,10 @@ window.__ModuleLoader__.load({
         h('span', { key: 'e2' }, expiryText(account.expiresAt)),
         h('span', { key: 'm1', style: style.muted }, t('catalog', '模型目录')),
         h('span', { key: 'm2' }, `${variant.catalogSource || '—'} · ${models.length}`),
+        h('span', { key: 'p1', style: style.muted }, t('contextPolicy', '上下文策略')),
+        h('span', { key: 'p2' }, variant.contextWindowPolicy === 'max'
+          ? t('contextPolicyMax', '使用可选最大窗口')
+          : t('contextPolicyDefault', '使用上游默认窗口')),
         h('span', { key: 'c1', style: style.muted }, t('creditsUpdated', '积分更新')),
         h('span', { key: 'c2' }, variant.creditsFetchedAt ? new Date(variant.creditsFetchedAt).toLocaleString() : '—'),
       ]);
@@ -381,7 +398,7 @@ window.__ModuleLoader__.load({
         packagesBlock,
         h('div', { key: 'models', style: { display: 'flex', flexDirection: 'column', gap: '4px' } }, [
           h('div', { key: 't', style: style.sectionTitle }, t('allModels', '全部模型')),
-          h(ModelTable, { key: 'tbl', models }),
+          h(ModelTable, { key: 'tbl', models, policy: variant.contextWindowPolicy }),
         ]),
       ]);
     }

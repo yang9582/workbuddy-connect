@@ -163,6 +163,14 @@ hermes workbuddy doctor
 - Client 文案走 DSH 的 locale 服务（namespace `workbuddy`，中英两套字典，按当前语言注册并保留
   `en` 回退）；插件标题/描述在 `locale/{zh,en}.json` 的 `meta` 里。
 - 积分只取一次、不轮询（每次查询都会真实打到计费接口）；菜单行共享同一次请求。
+- **上下文窗口**按 `contextWindowPolicy` 写入（默认 `max`：取该模型可选窗口的最大值，例如
+  国际版 hy4-preview 200K → 1M；改成 `default` 则用上游当前窗口）。单模型覆盖用
+  `contextWindowOverrides: {"glm-5.3": 500000}`，优先级最高。设置页的「上下文」列会显示
+  生效值与可选项，并标明当前策略。
+  > DSH 的 `llm-pi-ai` 配置只能声明**一个** `contextWindow`，所以这里没有官方插件那种
+  > "模型卡片里选窗口"的下拉——改桥接配置 → `wbconnect dsh bundle` → 重启 DSH。
+  > 另外：上游目录只有**国际版**给可选窗口（`supportedContextWindows`，实测 11 个模型），
+  > 国内版只有一个固定窗口，`max` 与 `default` 等价。
 - 推理档位按优先级生成（`wbconnect dsh bundle` 时计算）：
   1. `effortOverrides`：桥接配置里的 `{"模型id": ["low","high"]}`，最高优先；
   2. 上游模型目录的 `reasoning.supportedEfforts`（权威，官方插件同源）；
@@ -245,6 +253,18 @@ Hermes 内另有 `/workbuddy status|start|stop|sync|logs` 斜杠命令。
 - `anthropicSystemPrompt`：自定义替换文本（= `neutralSystemPrompt`）
 - `anthropicDefaultModel`：`claude-*` 请求映射到的默认模型
 - `modelAliases`：`{ "claude-sonnet-4-5": "kimi-k3" }` 之类的精确映射
+
+### DSH 生成策略（每个实例的 `config*.json` 里可写）
+
+| 键 | 作用 |
+|---|---|
+| `contextWindowPolicy` | `max`（默认，取可选窗口最大值）/ `default`（上游当前窗口） |
+| `contextWindowOverrides` | `{"模型id": 500000}`，单模型指定窗口 |
+| `effortPolicy` | `force`（默认，未声明档位的模型也写三档）/ `declared`（只写有依据的） |
+| `effortForceLevels` | 强制写出时使用的档位，默认 `["low","medium","high"]` |
+| `effortOverrides` | `{"模型id": ["low","high"]}`，单模型指定档位 |
+
+改完执行 `wbconnect dsh bundle` 并重启 DSH。
 
 端口优先级：`WORKBUDDY_BRIDGE_PORT` 环境变量 > 配置文件 > 默认 39621。
 插件启动桥接时会同时传环境变量并校正配置文件，改端口不再需要手工删 `config.json`。

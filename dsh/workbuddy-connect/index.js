@@ -38,16 +38,19 @@ export function readConfig(dir, file) {
 }
 
 /** 把桥接 `/v1/status` 裁成 UI 需要的形状（绝不带令牌）。 */
-export function summarize(status, key, label) {
+export function summarize(status, key, label, config = {}) {
   const credits = status && typeof status.credits === "object" && status.credits !== null ? status.credits : null;
   const accounts = Array.isArray(credits?.accounts) ? credits.accounts : [];
   const models = Array.isArray(status?.models) ? status.models : [];
   const account = status && typeof status.account === "object" && status.account !== null ? status.account : null;
+  const contextMode = String(config?.contextWindowPolicy || "max").toLowerCase() === "default" ? "default" : "max";
   return {
     key,
     label,
     ok: true,
     signIn: status?.signIn?.state ?? null,
+    // 只回传策略名，不暴露整份桥接配置
+    contextWindowPolicy: contextMode,
     account: account === null ? null : {
       uid: typeof account.uid === "string" ? account.uid : null,
       domain: typeof account.domain === "string" ? account.domain : null,
@@ -73,6 +76,10 @@ export function summarize(status, key, label) {
         id: model.id,
         name: typeof model.name === "string" && model.name !== "" ? model.name : model.id,
         contextWindow: typeof model.contextWindow === "number" ? model.contextWindow : null,
+        defaultContextWindow: typeof model.defaultContextWindow === "number" ? model.defaultContextWindow : null,
+        supportedContextWindows: Array.isArray(model.supportedContextWindows)
+          ? model.supportedContextWindows.filter((value) => typeof value === "number" && value > 0)
+          : [],
         multiplier: typeof model.multiplier === "string" ? model.multiplier : null,
         badges: Array.isArray(model.badges) ? model.badges.map(String) : [],
         free: model.free === true,
@@ -96,7 +103,7 @@ async function readVariant(variant, dir, refresh) {
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
     if (!response.ok) return { key: variant.key, label: variant.label, ok: false, error: `桥接 HTTP ${response.status}` };
-    return summarize(await response.json(), variant.key, variant.label);
+    return summarize(await response.json(), variant.key, variant.label, config);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return { key: variant.key, label: variant.label, ok: false, error: message.slice(0, 160) };

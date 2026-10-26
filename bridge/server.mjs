@@ -207,10 +207,17 @@ async function refreshCatalog({ force = false } = {}) {
 function displayRows(now = Date.now()) {
   return catalog.models.map((model) => {
     const live = modelWithCurrentPromotion(model, now);
+    const supported = Array.isArray(live.supportedContextWindows)
+      ? live.supportedContextWindows.filter((value) => typeof value === "number" && value > 0)
+      : [];
     return {
       id: live.id,
       name: typeof live.name === "string" ? live.name : live.id,
       contextWindow: typeof live.contextWindow === "number" ? live.contextWindow : null,
+      // 国际版目录会给出可选窗口（如 [200000, 1000000]）与默认值；国内版没有这两个字段
+      defaultContextWindow: typeof live.defaultContextWindow === "number" ? live.defaultContextWindow : null,
+      supportedContextWindows: supported,
+      maxInputTokens: typeof live.maxInputTokens === "number" ? live.maxInputTokens : null,
       maxTokens: typeof live.maxTokens === "number" ? live.maxTokens : null,
       multiplier: normalizeCredits(live.billing?.credits) ?? null,
       badges: Array.isArray(live.billing?.badges) ? live.billing.badges : [],
@@ -446,6 +453,10 @@ async function handle(req, res) {
           owned_by: "workbuddy",
           name: model.name,
           context_length: model.contextWindow ?? undefined,
+          // 可选上下文窗口（国际版目录才有）；国内版为空
+          supported_context_windows: model.supportedContextWindows.length > 0 ? model.supportedContextWindows : undefined,
+          default_context_window: model.defaultContextWindow ?? undefined,
+          max_input_tokens: model.maxInputTokens ?? undefined,
           max_tokens: model.maxTokens ?? undefined,
           // 非标准扩展字段：倍率 / 促销徽章 / 推理档位声明（Hermes 忽略，插件与脚本使用）
           multiplier: model.multiplier ?? undefined,

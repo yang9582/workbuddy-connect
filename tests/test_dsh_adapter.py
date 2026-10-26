@@ -332,5 +332,65 @@ class DshEffortRenderingTests(unittest.TestCase):
         self.assertEqual(classify(False, 0), "unknown")
 
 
+class DshContextWindowTests(unittest.TestCase):
+    """contextWindow 的取值：override > max/default 策略 > 上游 contextWindow。"""
+
+    def setUp(self) -> None:
+        self.adapter = DshAdapter()
+        self.model = {
+            "id": "hy4-preview",
+            "context_length": 200000,
+            "supported_context_windows": [200000, 1000000],
+        }
+
+    def _window(self, model=None, policy=None):
+        return self.adapter._model_context_window(
+            model if model is not None else self.model,
+            policy or {"context_mode": "default", "context_overrides": {}},
+        )
+
+    def test_default_policy_uses_upstream_window(self) -> None:
+        self.assertEqual(self._window(), 200000)
+
+    def test_max_policy_uses_largest_supported(self) -> None:
+        self.assertEqual(self._window(policy={"context_mode": "max", "context_overrides": {}}), 1000000)
+
+    def test_override_wins_over_policy(self) -> None:
+        policy = {"context_mode": "max", "context_overrides": {"hy4-preview": 300000}}
+        self.assertEqual(self._window(policy=policy), 300000)
+
+    def test_max_without_choices_keeps_upstream_window(self) -> None:
+        model = {"id": "hy3", "context_length": 192000}
+        self.assertEqual(self._window(model, {"context_mode": "max", "context_overrides": {}}), 192000)
+
+    def test_invalid_supported_values_are_ignored(self) -> None:
+        model = {"id": "x", "context_length": 100000, "supported_context_windows": [0, -1, "big", 500000]}
+        self.assertEqual(self._window(model, {"context_mode": "max", "context_overrides": {}}), 500000)
+
+    def test_missing_context_returns_none(self) -> None:
+        self.assertIsNone(self._window({"id": "x"}, {"context_mode": "max", "context_overrides": {}}))
+
+    def test_policy_defaults_to_max_and_reads_overrides(self) -> None:
+        class FakeManager:
+            def read_config(self, inst):
+                return {"contextWindowOverrides": {"glm-5.3": 150000}}
+
+        from workbuddy import service
+
+        policy = self.adapter._effort_policy(FakeManager(), service.INSTANCES[0])
+        self.assertEqual(policy["context_mode"], "max")
+        self.assertEqual(policy["context_overrides"], {"glm-5.3": 150000})
+
+    def test_policy_can_be_set_to_default(self) -> None:
+        class FakeManager:
+            def read_config(self, inst):
+                return {"contextWindowPolicy": "default"}
+
+        from workbuddy import service
+
+        policy = self.adapter._effort_policy(FakeManager(), service.INSTANCES[0])
+        self.assertEqual(policy["context_mode"], "default")
+
+
 if __name__ == "__main__":
     unittest.main()

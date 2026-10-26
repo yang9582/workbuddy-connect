@@ -165,12 +165,15 @@ class DshAdapter(HarnessAdapter):
 
     # ── 配置渲染 ────────────────────────────────────────────
     def _effort_policy(self, manager, inst) -> Dict[str, Any]:
-        """从桥接配置读档位策略。
+        """从桥接配置读渲染策略。
 
         - ``effortPolicy``: ``force``（默认，目录未声明的推理模型也写出三档）/
           ``declared``（只写目录声明或探测确认的档位）
         - ``effortForceLevels``: 强制写出时使用的档位（默认 low/medium/high）
         - ``effortOverrides``: ``{"模型id": ["low","high"]}``，优先级最高
+        - ``contextWindowPolicy``: ``max``（默认，用该模型可选窗口里的最大值，如国际版 1M）/
+          ``default``（用上游当前窗口，如 200K/300K）
+        - ``contextWindowOverrides``: ``{"模型id": 200000}``，优先级最高
         """
         config: Dict[str, Any] = {}
         try:
@@ -184,11 +187,38 @@ class DshAdapter(HarnessAdapter):
         if not isinstance(levels, list) or not levels:
             levels = list(DEFAULT_FORCE_LEVELS)
         overrides = config.get("effortOverrides")
+        context_mode = str(config.get("contextWindowPolicy") or "max").strip().lower()
+        context_overrides = config.get("contextWindowOverrides")
         return {
             "force": policy != "declared",
             "levels": [str(level) for level in levels],
             "overrides": overrides if isinstance(overrides, dict) else {},
+            "context_mode": "default" if context_mode == "default" else "max",
+            "context_overrides": context_overrides if isinstance(context_overrides, dict) else {},
         }
+
+    def _model_context_window(self, model: Dict[str, Any],
+                              policy: Optional[Dict[str, Any]]) -> Optional[int]:
+        """算出写进 provider 的 contextWindow。
+
+        优先级：contextWindowOverrides > contextWindowPolicy(max/default) > 上游 contextWindow。
+        上游没给可选窗口时（国内版），max 与 default 等价。
+        """
+        model_id = str(model.get("id") or "")
+        policy = policy or {}
+        override = (policy.get("context_overrides") or {}).get(model_id)
+        if isinstance(override, int) and override > 0:
+            return override
+        current = model.get("context_length")
+        current = current if isinstance(current, int) and current > 0 else None
+        if policy.get("context_mode") != "max":
+            return current
+        supported = model.get("supported_context_windows")
+        if isinstance(supported, list):
+            values = [value for value in supported if isinstance(value, int) and value > 0]
+            if values:
+                return max(values)
+        return current
 
     def _model_efforts(self, model: Dict[str, Any], efforts: Optional[Dict[str, List[str]]],
                        policy: Optional[Dict[str, Any]]) -> List[str]:
@@ -229,7 +259,7 @@ class DshAdapter(HarnessAdapter):
             name = model.get("name")
             if isinstance(name, str) and name and name != model_id:
                 lines.append(f"            name: {_yaml_str(name)}")
-            context = model.get("context_length")
+            context = self._model_context_window(model, policy)
             if isinstance(context, int) and context > 0:
                 lines.append(f"            contextWindow: {context}")
             max_tokens = model.get("max_tokens")
