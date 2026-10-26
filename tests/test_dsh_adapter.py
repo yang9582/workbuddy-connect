@@ -158,6 +158,8 @@ class DshBundleTests(unittest.TestCase):
         manifest = json.loads((self.bundle / "package.json").read_text(encoding="utf-8"))
         self.assertEqual(manifest["name"], "workbuddy-connect")
         self.assertEqual(manifest["dsh"]["bundle"]["patch"], "./cordis.patch.yml")
+        self.assertEqual(manifest["dsh"]["client"]["platform"], "web")
+        self.assertIn("已生成 bundle", lines[0])
 
         if yaml is None:
             self.skipTest("PyYAML 不可用")
@@ -165,8 +167,24 @@ class DshBundleTests(unittest.TestCase):
         # 第一条是 bundle 自己的 Host 半插入行；临时 DSH_HOME 里没有官方插件，因此没有 llm-workbuddy 关闭行
         self.assertEqual(data[0]["insert"][0]["id"], "workbuddy-connect")
         self.assertEqual([row["id"] for row in data if "id" in row], ["llm-pi-ai"])
-        self.assertIn("已生成 bundle", lines[0])
-        self.assertEqual(manifest["dsh"]["client"]["platform"], "web")
+
+    def test_write_bundle_writes_env_tokens(self) -> None:
+        """bundle 的 patch 用 apiKeyEnv 引用令牌；只写 patch 不写 .env，换机就 401。"""
+        with mock.patch.object(self.adapter, "_collect", return_value=(self._providers(), {"T": "v"}, [])):
+            lines = self.adapter.write_bundle(manager=None)
+
+        env_file = self.adapter.dsh_home / ".env"
+        self.assertTrue(env_file.is_file(), "write_bundle 必须同时写 ~/.dsh/.env")
+        self.assertIn("T=v", env_file.read_text(encoding="utf-8"))
+        self.assertTrue(any(".env" in line for line in lines))
+
+    def test_bundle_patch_has_no_author_machine_paths(self) -> None:
+        """生成物里不能出现作者机器的绝对路径（换机不可用）。"""
+        with mock.patch.object(self.adapter, "_collect", return_value=(self._providers(), {"T": "v"}, [])):
+            self.adapter.write_bundle(manager=None)
+        patch = (self.bundle / "cordis.patch.yml").read_text(encoding="utf-8")
+        for needle in ("C:\\", "D:\\", "/Users/", "/home/"):
+            self.assertNotIn(needle, patch)
 
     def test_no_providers_is_an_error_not_a_write(self) -> None:
         with mock.patch.object(self.adapter, "_collect", return_value=([], {}, ["桥接未启动"])):

@@ -32,6 +32,7 @@ import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from .. import __version__
 from .base import HarnessAdapter
 
 BEGIN = "# >>> workbuddy-connect (managed; wbconnect dsh) >>>"
@@ -408,7 +409,8 @@ class DshAdapter(HarnessAdapter):
     def _bundle_manifest(self) -> Dict[str, Any]:
         return {
             "name": BUNDLE_PACKAGE,
-            "version": "2.1.0",
+            # 版本只有一处真源（workbuddy/__init__.py），避免上传的包与本地跑的不一致
+            "version": __version__,
             "private": True,
             "type": "module",
             "description": (
@@ -437,7 +439,7 @@ class DshAdapter(HarnessAdapter):
 
     def write_bundle(self, manager) -> List[str]:
         """生成/刷新 bundle 包（package.json + 声明式 cordis.patch.yml）。"""
-        providers, _tokens, warnings = self._collect(manager)
+        providers, tokens, warnings = self._collect(manager)
         if not providers:
             return ["没有可写入的 provider：" + ("; ".join(warnings) or "桥接未启动")]
         target = self.bundle_dir()
@@ -452,7 +454,12 @@ class DshAdapter(HarnessAdapter):
         (target / PATCH_FILENAME).write_text(
             self._render_block(providers, disable_official, include_host=True), encoding="utf-8",
         )
+        # patch 里的 apiKeyEnv 依赖 ~/.dsh/.env；只生成 patch 而不写令牌，
+        # 换台机器/新克隆会直接 401（bundle 路径以前漏了这一步）
+        changed = self._write_env(tokens)
         lines = [f"已生成 bundle：{target}"]
+        if changed:
+            lines.append(f"已更新 {self.dsh_home / '.env'}：{', '.join(changed)}")
         if warnings:
             lines.extend(f"提示: {w}" for w in warnings)
         return lines
