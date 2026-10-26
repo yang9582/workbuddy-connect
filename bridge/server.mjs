@@ -22,20 +22,24 @@ import { homedir } from "node:os";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 
-// vendor/host-bundle.js 的导出使用打包后的单字母别名（见其文件末尾的 export 语句）
+// 内核只通过 lib/kernel.mjs 加载：那里集中处理打包产物的单字母别名，
+// 并在上游布局变化时抛出可读的 KernelContractError（而不是 import 期 SyntaxError）。
 import {
-  O as WorkBuddyUpstreamClient,     // 上游客户端：chatStream / refreshToken / fetchModels / fetchCredits
-  m as WorkBuddyCredentialStore,    // 凭据存储：桌面登录态 + 自动刷新
-  b as atRestKeyProviderFor,        // 加密凭据的密钥提供者（调用 App 自带 Electron 解密）
-  S as CN_VARIANT,                  // 国内版 WorkBuddy
-  x as AI_VARIANT,                  // 国际版 WorkBuddy AI
-  w as variantFor,
-  P as prepareChatBody,             // OpenAI 请求体规范化（强制 stream / developer→system / tool_choice 扁平化）
-  j as modelWithCurrentPromotion,   // 叠加“当前生效”的促销 → 实时倍率 + 促销徽章（同 DSH 展示）
-  M as normalizeCredits,            // 上游 credits 串 → 纯倍率（x0.79）
-  u as FALLBACK_WORKBUDDY_MODELS,
-  l as FALLBACK_WORKBUDDY_AI_MODELS,
-} from "./vendor/host-bundle.js";
+  WorkBuddyUpstreamClient,      // 上游客户端：chatStream / refreshToken / fetchModels / fetchCredits
+  WorkBuddyCredentialStore,     // 凭据存储：桌面登录态 + 自动刷新
+  atRestKeyProviderFor,         // 加密凭据的密钥提供者（调用 App 自带 Electron 解密）
+  CN_VARIANT,                   // 国内版 WorkBuddy
+  AI_VARIANT,                   // 国际版 WorkBuddy AI
+  variantFor,
+  prepareChatBody,              // OpenAI 请求体规范化（强制 stream / developer→system / tool_choice 扁平化）
+  modelWithCurrentPromotion,    // 叠加“当前生效”的促销 → 实时倍率 + 促销徽章（同 DSH 展示）
+  normalizeCredits,             // 上游 credits 串 → 纯倍率（x0.79）
+  FALLBACK_WORKBUDDY_MODELS,
+  FALLBACK_WORKBUDDY_AI_MODELS,
+  describeKernel,
+} from "./lib/kernel.mjs";
+import { applyChatBody, applyMessages, resolveSystemPolicy } from "./lib/system-policy.mjs";
+import { sanitizeSystemText } from "./lib/system-text.mjs";
 import { loadDshEnv } from "./lib/dsh-env.mjs";
 
 // 与 DSH 插件同源的 WORKBUDDY* 变量（Electron 二进制路径等）先加载，
@@ -75,8 +79,26 @@ function loadConfig() {
   return config;
 }
 
+/**
+ * 端口优先级：WORKBUDDY_BRIDGE_PORT 环境变量 > 配置文件 > 39621。
+ * 环境变量优先是为了让插件在"改了端口设置但配置文件还是旧值"时也能正确起进程
+ * （历史缺陷：插件只在配置文件不存在时写 port，改端口后旧值一直生效）。
+ */
+function resolvePort(config) {
+  const override = Number(process.env.WORKBUDDY_BRIDGE_PORT);
+  if (Number.isFinite(override) && override >= 1 && override <= 65535) return Math.floor(override);
+  const configured = Number(config.port);
+  if (Number.isFinite(configured) && configured >= 1 && configured <= 65535) return Math.floor(configured);
+  return 39621;
+}
+
 const config = loadConfig();
 const variant = variantFor(config.variant) ?? CN_VARIANT;
+const PORT = resolvePort(config);
+const kernelInfo = describeKernel();
+// system prompt 策略按协议面分别解析（Anthropic 面的默认值沿用旧的 replace 行为，避免回归）
+const chatPolicy = resolveSystemPolicy(config, variant.id, "chat");
+const anthropicPolicy = resolveSystemPolicy(config, variant.id, "anthropic");
 const catalogRefreshMs = Math.max(1, config.catalogRefreshMinutes) * 60_000;
 // 目录缓存按变体分开，避免国内版与国际版实例互相覆盖
 const CACHE_PATH = join(STATE_DIR, `catalog-cache-${variant.id}.json`);
@@ -279,11 +301,20 @@ function writeOpenAIError(res, status, kind, message) {
 }
 
 function bearerOk(req) {
+  // 两种鉴权头都接受：Authorization: Bearer …（Hermes/Codex/Claude Code）与
+  // x-api-key（Anthropic 原生客户端、pi-ai 的某些 provider 实现）。
+  let presented = null;
   const header = req.headers.authorization;
-  if (typeof header !== "string") return false;
-  const match = /^Bearer\s+(.+)$/i.exec(header.trim());
-  if (match === null) return false;
-  const a = Buffer.from(match[1]);
+  if (typeof header === "string") {
+    const match = /^Bearer\s+(.+)$/i.exec(header.trim());
+    if (match !== null) presented = match[1];
+  }
+  if (presented === null) {
+    const apiKey = req.headers["x-api-key"];
+    if (typeof apiKey === "string" && apiKey.trim() !== "") presented = apiKey.trim();
+  }
+  if (presented === null) return false;
+  const a = Buffer.from(presented);
   const b = Buffer.from(config.token);
   return a.length === b.length && timingSafeEqual(a, b);
 }
@@ -388,6 +419,12 @@ async function handle(req, res) {
       return;
     }
     if (!bearerOk(req)) {
+      if (process.env.WORKBUDDY_BRIDGE_DEBUG === "1") {
+        const used = typeof req.headers.authorization === "string"
+          ? "authorization"
+          : (typeof req.headers["x-api-key"] === "string" ? "x-api-key" : "none");
+        log(`auth failed: ${req.method} ${path} header=${used}`);
+      }
       writeOpenAIError(res, 401, "unauthorized", "missing or invalid Authorization bearer");
       return;
     }
@@ -402,6 +439,18 @@ async function handle(req, res) {
         catalogSource: catalog.source,
         catalogFetchedAt: catalog.fetchedAtMs === 0 ? null : new Date(catalog.fetchedAtMs).toISOString(),
         catalogError: catalog.lastError,
+        // 供 wbconnect doctor 判断"跑的是哪一版内核、system 策略是什么"
+        kernel: {
+          source: kernelInfo.source,
+          version: kernelInfo.version,
+          sha256: kernelInfo.sha256.slice(0, 16),
+          matchesRecord: kernelInfo.matchesRecord,
+        },
+        policy: {
+          chat: chatPolicy.mode,
+          anthropic: anthropicPolicy.mode,
+        },
+        port: PORT,
       });
       return;
     }
@@ -525,7 +574,7 @@ async function chatCompletions(req, res) {
     if (typeof parsed?.model === "string") requestModel = parsed.model;
   } catch { /* upstream will report */ }
 
-  const prepared = prepareChatBody(raw);
+  const prepared = applyChatBody(prepareChatBody(raw), chatPolicy);
   const controller = new AbortController();
   req.on("close", () => controller.abort());
 
@@ -618,41 +667,12 @@ function resolveAnthropicModel(model) {
   return model;
 }
 
-// WorkBuddy 上游对 Claude Code 的 system prompt 做渠道指纹校验（11128）。默认把长 system
-// 换成中性提示词（工具/消息不受影响）；config.anthropicSystemMode = "pass" 可关闭。
-const ANTHROPIC_NEUTRAL_SYSTEM = (
-  "You are a helpful AI coding assistant running in a terminal CLI. "
-  + "Follow the user instructions, be concise, and use the provided tools when they help complete the task. "
-  + "Prefer reading files before editing and keep changes minimal."
-);
-
-function maybeRewriteAnthropicSystem(messages) {
-  const mode = typeof config.anthropicSystemMode === "string" ? config.anthropicSystemMode : "replace";
-  if (mode !== "replace") return messages;
-  const index = messages.findIndex((message) => message.role === "system");
-  if (index === -1) return messages;
-  const text = String(messages[index].content ?? "");
-  if (text.length < 800) return messages;
-  const custom = typeof config.anthropicSystemPrompt === "string" ? config.anthropicSystemPrompt.trim() : "";
-  const out = messages.slice();
-  out[index] = { role: "system", content: custom !== "" ? custom : ANTHROPIC_NEUTRAL_SYSTEM };
-  return out;
-}
+// system prompt 的改写策略已收敛到 lib/system-policy.mjs（OpenAI / Anthropic 两个协议面共用），
+// 这里只做协议转换，不再各自持有"中性提示词"与替换阈值。
 
 function safeJsonParse(value) {
   if (typeof value !== "string" || value.trim() === "") return {};
   try { return JSON.parse(value); } catch { return {}; }
-}
-
-/** Claude Code 会在 system prompt 顶部塞 x-anthropic-billing-header（cc_version/cc_entrypoint），
- *  WorkBuddy 上游把它当作“非官方渠道”拒绝（11128）。这里在转发前剥掉这类标记行。 */
-function sanitizeSystemText(text) {
-  if (typeof text !== "string" || text === "") return "";
-  return text
-    .split("\n")
-    .filter((line) => !/^\s*x-anthropic-billing-header\s*:/i.test(line))
-    .join("\n")
-    .trim();
 }
 
 /** Anthropic content blocks -> OpenAI chat messages. */
@@ -922,7 +942,7 @@ async function anthropicMessages(req, res) {
   const model = resolveAnthropicModel(requestedModel);
   const openaiBody = {
     model,
-    messages: maybeRewriteAnthropicSystem(toOpenAIMessages(body)),
+    messages: applyMessages(toOpenAIMessages(body), anthropicPolicy),
     max_tokens: typeof body.max_tokens === "number" ? body.max_tokens : undefined,
     temperature: typeof body.temperature === "number" ? body.temperature : undefined,
     top_p: typeof body.top_p === "number" ? body.top_p : undefined,
@@ -959,7 +979,8 @@ async function anthropicMessages(req, res) {
       `workbuddy upstream ${result.kind} (http ${result.status}): ${String(result.message ?? "").slice(0, 400)}`);
     return;
   }
-  if (body.stream === false) {
+  // Anthropic 规范：只有显式 stream: true 才走 SSE，缺省是非流式 JSON
+  if (body.stream !== true) {
     const completion = await assembleCompletion(result.response.body, model);
     writeJson(res, 200, toAnthropicMessage(completion, requestedModel));
     return;
@@ -983,8 +1004,10 @@ loadCachedCatalog();
 await refreshCatalog({ force: true });
 
 const server = createServer((req, res) => { handle(req, res); });
-server.listen(config.port, "127.0.0.1", () => {
-  log(`listening on http://127.0.0.1:${config.port} (variant ${variant.id}, ${catalog.models.length} models from ${catalog.source})`);
+server.listen(PORT, "127.0.0.1", () => {
+  log(`listening on http://127.0.0.1:${PORT} (variant ${variant.id}, ${catalog.models.length} models from ${catalog.source})`);
+  log(`kernel ${kernelInfo.source}@${kernelInfo.version} sha256=${kernelInfo.sha256.slice(0, 16)}… policy chat=${chatPolicy.mode} anthropic=${anthropicPolicy.mode}`);
+  if (kernelInfo.warning !== null) log(`kernel warning: ${kernelInfo.warning}`);
   if (catalog.lastError !== null) log(`catalog warning: ${catalog.lastError}`);
 });
 

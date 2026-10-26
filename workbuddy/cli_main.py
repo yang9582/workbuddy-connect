@@ -151,6 +151,14 @@ def main(argv: List[str] | None = None) -> int:
     logs.add_argument("--instance", default="")
     logs.add_argument("--lines", type=int, default=40)
 
+    kernel = sub.add_parser("kernel", help="查看桥接内核来源；--refresh 从已安装插件重新提取")
+    kernel.add_argument("--refresh", action="store_true", help="重新提取内核并刷新 kernel.json")
+
+    dsh = sub.add_parser("dsh", help="DeepSeek Harness 集成维护")
+    dsh_sub = dsh.add_subparsers(dest="dsh_cmd")
+    dsh_sub.add_parser("status", help="各 profile 的接入状态（只读）")
+    dsh_sub.add_parser("restore", help="把旧版补丁改过的官方插件恢复为原版")
+
     args = parser.parse_args(argv)
     cmd = args.cmd or "status"
     manager = _manager()
@@ -159,19 +167,31 @@ def main(argv: List[str] | None = None) -> int:
         return _cmd_status(manager)
     if cmd == "start":
         for inst in manager.instances():
-            result = manager.start(inst)
-            print(f"[{inst.label}] 已启动 :{result.get('port')}（pid {result.get('pid', '-')}）")
+            try:
+                result = manager.start(inst)
+                print(f"[{inst.label}] 已启动 :{result.get('port')}（pid {result.get('pid', '-')}）")
+            except Exception as exc:  # noqa: BLE001
+                print(f"[{inst.label}] 启动失败: {exc}")
         return 0
     if cmd == "stop":
         for inst in manager.instances():
             result = manager.stop(inst)
-            print(f"[{inst.label}] " + ("已停止" if result.get("stopped") else "本来就没在运行"))
+            if result.get("refused"):
+                print(f"[{inst.label}] 已拒绝结束: {result.get('reason')}")
+            else:
+                print(f"[{inst.label}] " + ("已停止" if result.get("stopped") else "本来就没在运行"))
         return 0
     if cmd == "restart":
         for inst in manager.instances():
-            manager.stop(inst)
-            result = manager.start(inst)
-            print(f"[{inst.label}] 已重启 :{result.get('port')}（pid {result.get('pid', '-')}）")
+            result = manager.stop(inst)
+            if result.get("refused"):
+                print(f"[{inst.label}] 已拒绝结束: {result.get('reason')}")
+                continue
+            try:
+                started = manager.start(inst)
+                print(f"[{inst.label}] 已重启 :{started.get('port')}（pid {started.get('pid', '-')}）")
+            except Exception as exc:  # noqa: BLE001
+                print(f"[{inst.label}] 重启失败: {exc}")
         return 0
     if cmd == "doctor":
         print(hermes_cli._doctor(manager))  # noqa: SLF001
@@ -189,7 +209,7 @@ def main(argv: List[str] | None = None) -> int:
     if cmd == "sync":
         summary = providers_sync.sync(
             manager, explicit=(args.profiles or None),
-            probe=not args.no_probe, force_probe=args.reprobe,
+            probe=(False if args.no_probe else None), force_probe=args.reprobe,
         )
         print(hermes_cli._render_sync(summary))  # noqa: SLF001
         return 0
@@ -199,6 +219,24 @@ def main(argv: List[str] | None = None) -> int:
                 continue
             print(f"=== {inst.key} ===")
             print(manager.logs_tail(inst, args.lines))
+        return 0
+    if cmd == "kernel":
+        from . import kernel as wb_kernel
+
+        if args.refresh:
+            result = wb_kernel.refresh()
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0 if result.get("ok") else 1
+        print(json.dumps(wb_kernel.describe(), ensure_ascii=False, indent=2))
+        return 0
+    if cmd == "dsh":
+        adapter = get("dsh")()
+        action = getattr(args, "dsh_cmd", None) or "status"
+        if action == "restore":
+            for line in adapter.restore_legacy():
+                print(line)
+        else:
+            print(json.dumps(adapter.status(), ensure_ascii=False, indent=2))
         return 0
     parser.print_help()
     return 1

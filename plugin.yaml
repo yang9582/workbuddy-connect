@@ -1,5 +1,5 @@
 name: workbuddy
-version: 2.0.0
+version: 2.1.0
 manifest_version: 2
 description: "WorkBuddy 桌面 App 的模型接入 Hermes（桥接托管 + provider 同步 + 桌面 UI）；同一仓库还提供 Claude Code / Codex / OpenClaw / DSH 适配器"
 author: Hermes Agent

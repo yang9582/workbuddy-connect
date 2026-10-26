@@ -51,6 +51,7 @@ DEFAULTS: Dict[str, Any] = {
     "node_path": "",
     "electron_bin_cn": "",
     "electron_bin_ai": "",
+    "probe_models": True,
     "sync_profiles": "",
 }
 
@@ -244,6 +245,31 @@ class BridgeManager:
         token = self.read_config(inst).get("token")
         return token if isinstance(token, str) else ""
 
+    def _prepare_config(self, inst: Instance, port: int) -> Path:
+        """确保配置文件存在，且端口与当前设置一致（其余键原样保留）。
+
+        历史缺陷：只在配置文件不存在时写 port，用户改端口后桥接仍监听旧端口，
+        插件却轮询新端口 → 启动超时，或留下一个孤儿实例。
+        """
+        path = self.config_path(inst)
+        data: Dict[str, Any] = {}
+        if path.exists():
+            try:
+                loaded = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    data = loaded
+            except Exception:
+                data = {}
+        merged = {
+            "catalogRefreshMinutes": 10,
+            **data,
+            "port": port,
+            "variant": inst.variant,
+        }
+        if not path.exists() or merged != data:
+            path.write_text(json.dumps(merged, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        return path
+
     def is_port_open(self, port: int) -> bool:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             sock.settimeout(0.4)
@@ -410,11 +436,69 @@ class BridgeManager:
             return []
 
     def ensure(self, inst: Instance) -> Dict[str, Any]:
-        """确保实例在跑；已在跑则直接返回健康快照。"""
-        health = self.health(inst)
-        if health.get("ok") or (health.get("error") != "not running" and health.get("signIn")):
-            return {"ok": bool(health.get("ok")), "already_running": True, "port": self.port(inst), "health": health}
+        """确保实例在跑；已在跑（即使未登录）则返回现状，不重复起进程。"""
         return self.start(inst)
+
+    # ── 进程归属 ────────────────────────────────────────────
+    # stop() 只结束"确认属于本插件"的进程：端口上可能是用户自己的服务，
+    # 无条件 taskkill /F /T 会误杀。判定顺序：
+    #   1) 用本地令牌访问 /healthz，返回 200 且 variant 匹配 → 确定是我们的桥接；
+    #   2) 兜底：pidfile 记录的 pid 仍在监听，且进程映像名是 node。
+    # 两者都不成立就拒绝结束并说明原因。
+
+    def pid_path(self, inst: Instance) -> Path:
+        return self.state_dir() / f"bridge-{inst.key}.pid"
+
+    def _read_recorded_pid(self, inst: Instance) -> Optional[int]:
+        try:
+            data = json.loads(self.pid_path(inst).read_text(encoding="utf-8"))
+            pid = int(data.get("pid") or 0)
+            return pid if pid > 0 else None
+        except Exception:
+            return None
+
+    def _write_recorded_pid(self, inst: Instance, pid: int) -> None:
+        try:
+            self.pid_path(inst).write_text(
+                json.dumps({"pid": pid, "port": self.port(inst), "started_at": time.time()}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+
+    def _clear_recorded_pid(self, inst: Instance) -> None:
+        try:
+            self.pid_path(inst).unlink()
+        except Exception:
+            pass
+
+    def _owns_port(self, inst: Instance) -> bool:
+        """端口上跑的是不是本插件的桥接（用本地令牌做身份验证）。"""
+        status, body = (0, {})
+        try:
+            status, body = self._http(inst, "/healthz", timeout=3.0)
+        except Exception:
+            return False
+        if status != 200 or not isinstance(body, dict):
+            return False
+        return str(body.get("variant") or "") == inst.variant
+
+    @staticmethod
+    def _process_name(pid: int) -> str:
+        try:
+            if os.name == "nt":
+                proc = subprocess.run(
+                    ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                    capture_output=True, timeout=10,
+                )
+                out = (proc.stdout or b"").decode("utf-8", "replace")
+                first = out.splitlines()[0] if out.strip() else ""
+                name = first.split(",")[0].strip().strip('"')
+                return name.lower()
+            proc = subprocess.run(["ps", "-p", str(pid), "-o", "comm="], capture_output=True, timeout=10)
+            return (proc.stdout or b"").decode("utf-8", "replace").strip().lower()
+        except Exception:
+            return ""
 
     def start(self, inst: Instance, timeout: float = START_TIMEOUT_S) -> Dict[str, Any]:
         with self._start_locks[inst.key]:
@@ -423,23 +507,20 @@ class BridgeManager:
                 return {"ok": True, "already_running": True, "port": self.port(inst), "health": health}
             port = self.port(inst)
             if self.is_port_open(port):
+                if self._owns_port(inst):
+                    # 是我们的桥接，只是没登录/目录为空：不再起第二个实例
+                    return {"ok": False, "already_running": True, "port": port, "health": health}
                 raise RuntimeError(
-                    f"{inst.label}: 端口 {port} 已被其他进程占用（不是本插件按当前配置启动的桥接）"
+                    f"{inst.label}: 端口 {port} 已被其他进程占用（不是本插件启动的桥接）"
                 )
             self.ensure_dirs()
             node = self.node_path()
-            cfg_path = self.config_path(inst)
-            if not cfg_path.exists():
-                cfg_path.write_text(
-                    json.dumps(
-                        {"port": port, "variant": inst.variant, "catalogRefreshMinutes": 10},
-                        ensure_ascii=False, indent=2,
-                    ) + "\n",
-                    encoding="utf-8",
-                )
+            cfg_path = self._prepare_config(inst, port)
             env = dict(os.environ)
             env["WORKBUDDY_BRIDGE_CONFIG"] = str(cfg_path)
             env["WORKBUDDY_BRIDGE_STATE"] = str(self.state_dir())
+            # 端口以插件设置为准：配置文件里的旧值不再能压过设置
+            env["WORKBUDDY_BRIDGE_PORT"] = str(port)
             electron = self.setting_str(inst.electron_key)
             if electron:
                 env[inst.electron_env] = electron
@@ -475,6 +556,7 @@ class BridgeManager:
                 except Exception:
                     status, body = 0, {}
                 if status == 200 and isinstance(body, dict):
+                    self._write_recorded_pid(inst, proc.pid)
                     return {"ok": True, "started": True, "pid": proc.pid, "port": port, "health": body}
                 time.sleep(0.4)
             raise RuntimeError(f"{inst.label}: 桥接启动超时（{int(timeout)}s）。日志末尾：\n{self.logs_tail(inst, 25)}")
@@ -483,7 +565,26 @@ class BridgeManager:
         port = self.port(inst)
         pids = self._pids_on_port(port)
         if not pids:
+            self._clear_recorded_pid(inst)
             return {"ok": True, "stopped": False, "reason": "not running", "port": port}
+
+        recorded = self._read_recorded_pid(inst)
+        trusted = self._owns_port(inst) or (
+            recorded is not None and recorded in pids and self._process_name(recorded).startswith("node")
+        )
+        if not trusted:
+            return {
+                "ok": False,
+                "stopped": False,
+                "refused": True,
+                "port": port,
+                "pids": pids,
+                "reason": (
+                    f"端口 {port} 被进程 {', '.join(str(p) for p in pids)} 占用，"
+                    "但无法确认它是本插件的桥接（/healthz 不匹配且无可信 pid 记录）；已拒绝结束，请自行处理。"
+                ),
+            }
+
         for pid in pids:
             try:
                 if os.name == "nt":
@@ -495,7 +596,10 @@ class BridgeManager:
         deadline = time.time() + timeout
         while time.time() < deadline and self.is_port_open(port):
             time.sleep(0.2)
-        return {"ok": not self.is_port_open(port), "stopped": True, "pids": pids, "port": port}
+        stopped = not self.is_port_open(port)
+        if stopped:
+            self._clear_recorded_pid(inst)
+        return {"ok": stopped, "stopped": True, "pids": pids, "port": port}
 
     # ─────────────────────────── 状态 ───────────────────────────
 

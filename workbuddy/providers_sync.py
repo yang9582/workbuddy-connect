@@ -39,6 +39,24 @@ def hermes_exe() -> str:
     return found
 
 
+def _kill_tree(pid: int) -> None:
+    """结束整棵进程树。
+
+    `subprocess.run(timeout=...)` 只杀直接子进程；Hermes CLI 会再拉起
+    `pm-runtime` 之类的孙进程，它们继承 stdout 句柄，会让调用方永远等不到 EOF
+    （表现为 `wbconnect sync --profiles all` 写完了却不返回）。
+    """
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, timeout=20)
+        else:
+            import signal
+
+            os.killpg(os.getpgid(pid), signal.SIGKILL)
+    except Exception:
+        pass
+
+
 def _run(args: List[str], profile: Optional[str] = None, timeout: float = 180.0) -> subprocess.CompletedProcess:
     cmd = [hermes_exe()]
     if profile:
@@ -46,10 +64,34 @@ def _run(args: List[str], profile: Optional[str] = None, timeout: float = 180.0)
     cmd += args
     # 指定 profile 时清掉 HERMES_HOME，避免与 -p 冲突；当前 profile 则保留原环境
     env = {k: v for k, v in os.environ.items() if k != "HERMES_HOME"} if profile else dict(os.environ)
-    return subprocess.run(
-        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
-        timeout=timeout, env=env,
+    flags = 0
+    if os.name == "nt":
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+        creationflags=flags,
+        start_new_session=(os.name != "nt"),
     )
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_tree(proc.pid)
+        try:
+            out, err = proc.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            out, err = "", ""
+        raise RuntimeError(
+            f"hermes {' '.join(args)} 超时（{int(timeout)}s）"
+            + (f"：{(err or out or '').strip()[:200]}" if (err or out) else "")
+        ) from None
+    return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
 
 
 def _get(key: str, profile: Optional[str]) -> str:
@@ -82,11 +124,25 @@ def current_profile() -> Optional[str]:
 
 
 def profiles_root() -> Path:
+    """Hermes 的 profiles 根目录。
+
+    从 wbconnect CLI（Hermes 进程之外）运行时 import 不到 `hermes_constants`，
+    必须回落到 `$HERMES_HOME`（与 harnesses/hermes.py 保持一致），否则会把
+    `~/.hermes` 当成 home，导致 `--profiles all` 只同步默认 profile。
+    """
     try:
         from hermes_constants import get_hermes_home
+
         home = get_hermes_home()
     except Exception:
-        home = Path.home() / ".hermes"
+        env = os.environ.get("HERMES_HOME", "").strip()
+        if env:
+            home = Path(env)
+        elif os.name == "nt":
+            root = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+            home = Path(root) / "hermes"
+        else:
+            home = Path.home() / ".hermes"
     root = home.parent.parent if home.parent.name == "profiles" else home
     return root / "profiles"
 
@@ -152,6 +208,9 @@ def sync_instance(
     verdicts = manager.probe_models(inst, models, force=force_probe) if probe else {}
     allowed = [row for row in models if verdicts.get(row["id"], "ok") != "blocked"]
     blocked = [row["id"] for row in models if verdicts.get(row["id"]) == "blocked"]
+    # 探测失败（超时/429/非 11158 的 4xx）记为 unknown：仍然写入，但要在摘要里明确告知，
+    # 否则用户会以为"全部可用"，选中后才拿到 400。
+    unverified = [row["id"] for row in allowed if probe and verdicts.get(row["id"]) == "unknown"]
     if not allowed:
         raise RuntimeError(f"{inst.key}: 当前账号没有任何可用模型（{len(models)} 个全部被上游拒绝）")
 
@@ -188,6 +247,7 @@ def sync_instance(
         "models": len(allowed),
         "models_total": len(models),
         "models_blocked": blocked,
+        "models_unverified": unverified,
         "model_default": model,
         "base_url": payload["base_url"],
         "token_env": inst.token_env,
@@ -198,10 +258,15 @@ def sync(
     manager,
     explicit: Optional[str] = None,
     *,
-    probe: bool = True,
+    probe: Optional[bool] = None,
     force_probe: bool = False,
 ) -> Dict[str, Any]:
-    """同步到目标 profile；返回按 profile 分组的摘要（不含任何令牌）。"""
+    """同步到目标 profile；返回按 profile 分组的摘要（不含任何令牌）。
+
+    ``probe=None`` 时按插件设置 ``probe_models`` 决定是否做账号权限探测。
+    """
+    if probe is None:
+        probe = manager.setting_bool("probe_models")
     spec = (explicit if explicit is not None and explicit != "" else manager.setting_str("sync_profiles"))
     targets = resolve_targets(spec)
     summary: Dict[str, Any] = {"profiles": {}, "errors": []}

@@ -1,0 +1,22 @@
+{
+  "source": "dsh-workbuddy-connect",
+  "version": "0.7.9",
+  "file": "vendor/host-bundle.js",
+  "sha256": "c2c54989215c1179ffe4cd13426d030fde4602721936792546439cc75c4b455d",
+  "size": 182015,
+  "exportedAt": "lib/host-heartbeat-SJaZ33tR.js",
+  "note": "内核是 dsh-workbuddy-connect 的打包产物（MIT），不是稳定 API。更新方式：python -m workbuddy.cli_main kernel --refresh。",
+  "exports": {
+    "WorkBuddyUpstreamClient": "O",
+    "WorkBuddyCredentialStore": "m",
+    "atRestKeyProviderFor": "b",
+    "CN_VARIANT": "S",
+    "AI_VARIANT": "x",
+    "variantFor": "w",
+    "prepareChatBody": "P",
+    "modelWithCurrentPromotion": "j",
+    "normalizeCredits": "M",
+    "FALLBACK_WORKBUDDY_MODELS": "u",
+    "FALLBACK_WORKBUDDY_AI_MODELS": "l"
+  }
+}

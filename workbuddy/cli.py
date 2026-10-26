@@ -93,7 +93,13 @@ def _render_sync(summary: dict) -> str:
             else:
                 total = info.get("models_total")
                 blocked = info.get("models_blocked") or []
-                counts = f"{info.get('models')} 个模型" + (f"（共 {total}，跳过 {len(blocked)} 个无权限）" if total and len(blocked) else "")
+                unverified = info.get("models_unverified") or []
+                detail = ""
+                if total and len(blocked):
+                    detail += f"，跳过 {len(blocked)} 个无权限"
+                if unverified:
+                    detail += f"，{len(unverified)} 个未验证（探测超时/被限流）"
+                counts = f"{info.get('models')} 个模型" + (f"（共 {total}{detail}）" if total and detail else "")
                 lines.append(f"[{label}] {key}: ✓ {counts}，默认 {info.get('model_default')}")
     for error in summary.get("errors") or []:
         lines.append(f"错误: {error}")
@@ -178,7 +184,8 @@ def build(manager):
                 print(_render_sync(providers_sync.sync(
                     manager,
                     explicit=(args.profiles or None),
-                    probe=not getattr(args, "no_probe", False),
+                    # 未显式 --no-probe 时交给插件设置 probe_models 决定
+                    probe=(False if getattr(args, "no_probe", False) else None),
                     force_probe=getattr(args, "reprobe", False),
                 )))
             elif cmd == "cleanup":
@@ -218,7 +225,10 @@ def _install(manager, spec: str) -> str:
             if dest.exists():
                 shutil.rmtree(dest)
             dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(source, dest, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+            # 与 harnesses/hermes.py 保持一致：不要把 .git / 脚本 / 字节码拷进 profile
+            shutil.copytree(source, dest, ignore=shutil.ignore_patterns(
+                ".git", "__pycache__", "*.pyc", "scripts", "tests",
+            ))
         except Exception as exc:  # noqa: BLE001
             lines.append(f"[{profile}] 复制失败: {exc}")
             continue

@@ -42,7 +42,7 @@ class HarnessAdapter:
         return Path(__file__).resolve().parents[2]
 
     def endpoint(self, manager: service.BridgeManager, key: str = "workbuddy-ai") -> Dict[str, Any]:
-        """返回 {base_url, token, model, models, port, instance}。"""
+        """返回 {base_url, token, model, models, model_rows, port, instance}。"""
         inst = next(i for i in service.INSTANCES if i.key == key)
         manager.ensure_dirs()
         token = manager.token(inst)
@@ -51,6 +51,7 @@ class HarnessAdapter:
             token = manager.token(inst)
         models = manager.models(inst) if manager.is_port_open(manager.port(inst)) else []
         allowed_ids = self._allowed_ids(manager, inst, models)
+        allowed = set(allowed_ids)
         model = next((m for m in providers_sync.PROVIDER_DEFAULT_MODEL.get(key, ()) if m in allowed_ids), None)
         if model is None:
             model = allowed_ids[0] if allowed_ids else "default-model"
@@ -60,7 +61,9 @@ class HarnessAdapter:
             "base_url": f"http://127.0.0.1:{manager.port(inst)}/v1",
             "token": token,
             "model": model,
-            "models": [ident for ident in allowed_ids],
+            "models": list(allowed_ids),
+            # 完整目录行（id/name/context_length/max_tokens），供 DSH 等需要静态声明的配置使用
+            "model_rows": [row for row in models if row.get("id") in allowed],
         }
 
     def _allowed_ids(self, manager: service.BridgeManager, inst: service.Instance,
