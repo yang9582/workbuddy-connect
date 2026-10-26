@@ -164,6 +164,8 @@ export function apply(ctx) {
   let cache = { at: 0, data: null };
   // Client 半启动时回报一次"注册结果 + 构建标记"，用于判断浏览器加载的是哪一版模块。
   let beacon = null;
+  // 路由注册失败（DSH 版本差异）记在这里，随 /workbuddy/status 回报，便于定位
+  const routeErrors = [];
 
   const statusHandler = async (req, res) => {
     try {
@@ -179,6 +181,7 @@ export function apply(ctx) {
       let llm = null;
       try { llm = ctx.get("llm"); } catch { llm = null; }
       data.providerRegistered = providersRegistered(llm);
+      if (routeErrors.length > 0) data.routeErrors = routeErrors.slice(0, 4);
       cache = { at: Date.now(), data };
       sendJson(res, 200, data);
     } catch (error) {
@@ -198,12 +201,22 @@ export function apply(ctx) {
   };
 
   // 三个独立 exact 路由：单条 exact 只匹配一个 path，其它路径会被 SPA fallback 吃掉（404）。
+  // 逐条 try/catch：DSH 换版本后某条路由注册被拒时，不能让整个 Host 半 apply 失败
+  // （之前一次路由改动就把插件整体搞挂，积分/倍率全没了）。
   ctx.effect(() => {
-    const disposers = [
-      ctx.webServer.register({ kind: "exact", path: "/workbuddy/status", handler: statusHandler }),
-      ctx.webServer.register({ kind: "exact", path: "/workbuddy/beacon", handler: beaconReadHandler }),
-      ctx.webServer.register({ kind: "exact", path: "/workbuddy/client-beacon", handler: beaconWriteHandler }),
-    ];
+    const disposers = [];
+    for (const [path, handler] of [
+      ["/workbuddy/status", statusHandler],
+      ["/workbuddy/beacon", beaconReadHandler],
+      ["/workbuddy/client-beacon", beaconWriteHandler],
+    ]) {
+      try {
+        disposers.push(ctx.webServer.register({ kind: "exact", path, handler }));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        routeErrors.push(`${path}: ${message.slice(0, 120)}`);
+      }
+    }
     return () => {
       for (const dispose of disposers) {
         try { dispose(); } catch { /* 卸载时忽略单个失败 */ }

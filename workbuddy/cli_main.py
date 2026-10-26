@@ -11,11 +11,14 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 from typing import List
 
 from . import providers_sync, service
 from . import cli as hermes_cli
 from .harnesses import REGISTRY, detect_all, get
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _manager() -> service.BridgeManager:
@@ -167,6 +170,12 @@ def main(argv: List[str] | None = None) -> int:
     dsh_sub.add_parser("bundle", help="生成/刷新 DSH bundle 包（dsh/workbuddy-connect/）")
     dsh_sub.add_parser("restore", help="把旧版补丁改过的官方插件恢复为原版")
 
+    autostart = sub.add_parser("autostart", help="管理开机自启（Windows 启动文件夹）")
+    autostart.add_argument(
+        "action", nargs="?", default="status", choices=["status", "install", "uninstall"],
+        help="默认 status",
+    )
+
     args = parser.parse_args(argv)
     cmd = args.cmd or "status"
     manager = _manager()
@@ -200,6 +209,34 @@ def main(argv: List[str] | None = None) -> int:
                 print(f"[{inst.label}] 已重启 :{started.get('port')}（pid {started.get('pid', '-')}）")
             except Exception as exc:  # noqa: BLE001
                 print(f"[{inst.label}] 重启失败: {exc}")
+        return 0
+    if cmd == "autostart":
+        from . import autostart
+
+        action = getattr(args, "action", "status") or "status"
+        if action == "install":
+            result = autostart.install(REPO_ROOT)
+            if not result.get("ok"):
+                print(f"未安装：{result.get('reason')}")
+                return 1
+            print(f"已添加开机自启：{result['shortcut']}")
+            print(f"  启动命令：{result['target']} start")
+            print("  下次登录 Windows 时自动拉起桥接；运行 `wbconnect autostart uninstall` 或删掉该文件即可取消。")
+            return 0
+        if action == "uninstall":
+            result = autostart.uninstall()
+            if not result.get("ok"):
+                print(f"删除失败：{result.get('reason')}")
+                return 1
+            print(f"已删除开机自启：{result['shortcut']}" if result.get("removed") else f"本来就没有：{result['shortcut']}")
+            return 0
+        info = autostart.status(REPO_ROOT)
+        if not info["supported"]:
+            print("只有 Windows 支持自动创建启动项；Linux/macOS 请自行配置。")
+            return 0
+        print(f"开机自启：{'已安装' if info['installed'] else '未安装'}")
+        print(f"  启动项：{info['shortcut']}")
+        print(f"  命令  ：{info['target']} start")
         return 0
     if cmd == "doctor":
         if getattr(args, "all", False):

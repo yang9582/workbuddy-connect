@@ -145,3 +145,24 @@ test("beacon 路由可写可读，初始为空", async () => {
   const payload = JSON.parse(res.body);
   assert.equal(payload.beacon.body.build, "2.1.0+test");
 });
+
+test("单条路由注册失败不能拖垮整个 Host 半", () => {
+  const routes = [];
+  const ctx = {
+    effect: (fn) => { fn(); },
+    webServer: {
+      register: (route) => {
+        if (route.path === "/workbuddy/beacon") throw new Error("route rejected by host");
+        routes.push(route);
+        return () => {};
+      },
+    },
+    get: () => null,
+  };
+
+  assert.doesNotThrow(() => apply(ctx), "一条路由被拒时 apply 不能抛错");
+  assert.deepEqual(
+    routes.map((route) => route.path).sort(),
+    ["/workbuddy/client-beacon", "/workbuddy/status"],
+  );
+});

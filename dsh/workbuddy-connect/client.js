@@ -37,6 +37,7 @@ window.__ModuleLoader__.load({
       contextPolicyMax: 'Use the largest available window',
       contextPolicyDefault: 'Use the upstream default window',
       providerMissing: 'No WorkBuddy provider found. Run `wbconnect dsh bundle`, then reinstall the plugin or restart DSH.',
+      bridgeNotReady: 'Bridge not ready: run `wbconnect start` first; on a fresh install also run `wbconnect dsh bundle` and restart DSH.',
       creditsUpdated: 'Credits updated',
       packages: 'Plan balance',
       allModels: 'All models',
@@ -70,6 +71,7 @@ window.__ModuleLoader__.load({
       contextPolicyMax: '使用可选最大窗口',
       contextPolicyDefault: '使用上游默认窗口',
       providerMissing: '检测不到 WorkBuddy provider：请先运行 `wbconnect dsh bundle`，再到 DSH 插件页重新安装或重启 DSH。',
+      bridgeNotReady: '桥接未就绪：先运行 `wbconnect start`；首次安装还需要 `wbconnect dsh bundle` 后重启 DSH。',
       creditsUpdated: '积分更新',
       packages: '套餐余量',
       allModels: '全部模型',
@@ -462,6 +464,8 @@ window.__ModuleLoader__.load({
     function SettingsPage() {
       const state = useStore();
       const variants = state.data && Array.isArray(state.data.variants) ? state.data.variants : [];
+      // 两个变体都不可用 → 基本是桥接没起来 / 没配置，直接给出可执行的命令
+      const allBad = variants.length > 0 && variants.every((variant) => variant.ok !== true);
       return h('div', { style: style.page }, [
         h('div', { key: 'head', style: style.pageHead }, [
           h('div', { key: 't' }, [
@@ -479,6 +483,10 @@ window.__ModuleLoader__.load({
               `${t('readFailed', '读取失败')}：${state.error}`)
           : null,
         providerWarning(state.data),
+        allBad
+          ? h('div', { key: 'bridge', style: { fontSize: '11px', color: 'var(--ui-warning, #b8860b)' } },
+              t('bridgeNotReady', '桥接未就绪：先运行 `wbconnect start`；首次安装还需要 `wbconnect dsh bundle` 后重启 DSH。'))
+          : null,
         variants.length === 0
           ? h('div', { key: 'empty', style: style.muted }, t('empty', '还没有数据（桥接未启动或未登录）'))
           : h('div', { key: 'cards', style: { display: 'flex', flexDirection: 'column', gap: '12px' } },

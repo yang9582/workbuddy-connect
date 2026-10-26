@@ -6,11 +6,15 @@
 
 > 其它 harness（Hermes / Claude Code / Codex / OpenClaw）**正在开发中，本版本不做承诺**。
 
+> ⚠️ **不能"只装插件"**：这个 bundle 只是入口，模型列表和令牌由本地桥接按你的账号生成。
+> 必须按下面的「快速开始」四步走（WorkBuddy 已登录 → `wbconnect start` → `dsh bundle` → 插件页安装）。
+> 跳过任一步都会出现"插件装了但没有模型/没有积分"。
+
 ![license](https://img.shields.io/badge/license-MIT-blue)
 ![python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![node](https://img.shields.io/badge/node-18%2B-339933)
 ![platform](https://img.shields.io/badge/platform-Windows%20tested-lightgrey)
-![tests](https://img.shields.io/badge/tests-74%20Python%20%7C%2043%20Node-brightgreen)
+![tests](https://img.shields.io/badge/tests-78%20Python%20%7C%2044%20Node-brightgreen)
 
 > English TL;DR: A local bridge that exposes WorkBuddy desktop models to **DeepSeek Harness (DSH)**
 > as an installable plugin — with live credits in the composer, per-model rate multipliers in the
@@ -103,8 +107,15 @@ python -m workbuddy.cli_main dsh bundle
 
 装好后模型选择器里会出现 **WorkBuddy / WorkBuddy AI** 分组；选中其中的模型，输入框左侧会出现积分条。
 
-> ⚠️ **桥接不会开机自启**。重启电脑后要先跑一次 `wbconnect start`，否则模型出现在列表里但调用会失败。
-> 想省事可以把 `bin\wbconnect start` 放进「启动」文件夹，或做成计划任务（登录时运行）。
+> ⚠️ **桥接默认不会开机自启**。重启电脑后要先跑一次 `wbconnect start`，否则模型出现在列表里但调用会失败。
+> 一条命令装上自启（在 Windows「启动」文件夹里放一个静默脚本，随时可删）：
+>
+> ```bash
+> wbconnect autostart install     # 或 python -m workbuddy.cli_main autostart install
+> wbconnect autostart status      # 看装没装、装在哪
+> wbconnect autostart uninstall   # 取消
+> ```
+>
 > 排查时 `wbconnect status` 第一行就写着桥接是否在跑。
 
 不确定哪一步没通，先跑自检：
@@ -208,6 +219,7 @@ python -m workbuddy.cli_main <command>
 | `probe --effort [--reprobe]` | 探测哪些模型真正校验 `reasoning_effort`（结果供 DSH 生成使用） |
 | `endpoint [--show-token]` | 打印 OpenAI 兼容端点（令牌默认打码） |
 | `dsh [status\|bundle\|restore]` | **DSH 接入状态 / 生成 bundle / 恢复旧补丁** |
+| `autostart [status\|install\|uninstall]` | 开机自启（Windows 启动文件夹里的静默脚本） |
 | `doctor` / `doctor --all [--json]` | 桥接自检 / 端到端检查 |
 | `kernel [--refresh]` | 桥接内核来源与哈希；升级内核后重新提取并校验导出 |
 | `logs` | 查看桥接日志 |
@@ -268,9 +280,9 @@ python -m workbuddy.cli_main doctor --all --json   # 给脚本用
 
 ```bash
 python -m compileall -q workbuddy __init__.py
-python -m unittest discover -s tests -t . -v          # Python：69 项
+python -m unittest discover -s tests -t . -v          # Python：78 项
 node --test bridge/test/*.test.mjs                    # 桥接：31 项（策略/内核/CORS/SSE 拼装/模型字段）
-node --test dsh/workbuddy-connect/test/*.test.mjs     # bundle：12 项（Host 路由/裁剪/自检 + Client 注册）
+node --test dsh/workbuddy-connect/test/*.test.mjs     # bundle：13 项（Host 路由/裁剪/自检 + Client 注册）
 python -m workbuddy.cli_main doctor --all
 ```
 
@@ -310,8 +322,8 @@ tests/                单元测试（标准库 unittest，无第三方依赖）
   文本占位并在响应头标 `x-workbuddy-images: dropped`。
 - **只支持 DSH**：其它 harness 的适配器还在开发中，接口可能变，不保证可用。
 - **只测过 Windows**：路径与进程管理在 Windows 上验证；macOS / Linux 未验证。
-- **桥接需要常驻**：没有开机自启，重启后要手动 `wbconnect start`；桥接停了模型仍会列在
-  选择器里，但调用会失败（此时积分条显示 `✕`）。
+- **桥接需要常驻**：默认不开机自启（可 `wbconnect autostart install` 打开），重启后若没启动，
+  模型仍会列在选择器里但调用会失败（此时积分条显示 `✕`）。
 - **DSH 里没有"模型显隐/窗口下拉"**：这两项依赖 DSH 插件把 provider 程序化注册，本项目为了
   避开版本耦合只做配置化 + 设置页展示。
 - **个人使用定位**：请自行确认符合 WorkBuddy 的服务条款与所在地区法规；不要用于商业转售、
