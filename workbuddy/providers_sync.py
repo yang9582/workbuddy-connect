@@ -123,6 +123,22 @@ def current_profile() -> Optional[str]:
     return home.name if home.parent.name == "profiles" else None
 
 
+def current_home() -> Path:
+    """当前 Hermes home（Hermes 进程内优先用官方常量，CLI 里回落到 $HERMES_HOME）。"""
+    try:
+        from hermes_constants import get_hermes_home
+
+        return get_hermes_home()
+    except Exception:
+        env = os.environ.get("HERMES_HOME", "").strip()
+        if env:
+            return Path(env)
+        if os.name == "nt":
+            root = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+            return Path(root) / "hermes"
+        return Path.home() / ".hermes"
+
+
 def profiles_root() -> Path:
     """Hermes 的 profiles 根目录。
 
@@ -130,19 +146,7 @@ def profiles_root() -> Path:
     必须回落到 `$HERMES_HOME`（与 harnesses/hermes.py 保持一致），否则会把
     `~/.hermes` 当成 home，导致 `--profiles all` 只同步默认 profile。
     """
-    try:
-        from hermes_constants import get_hermes_home
-
-        home = get_hermes_home()
-    except Exception:
-        env = os.environ.get("HERMES_HOME", "").strip()
-        if env:
-            home = Path(env)
-        elif os.name == "nt":
-            root = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
-            home = Path(root) / "hermes"
-        else:
-            home = Path.home() / ".hermes"
+    home = current_home()
     root = home.parent.parent if home.parent.name == "profiles" else home
     return root / "profiles"
 
@@ -325,12 +329,31 @@ def fingerprint(manager) -> Dict[str, str]:
 
 
 def registered_providers() -> List[str]:
+    """当前 profile 已注册的 provider 名。
+
+    Hermes 进程内直接读运行时配置；`wbconnect` CLI 里 import 不到
+    `hermes_cli.config`，以前会静默返回空列表 —— 于是 `wbconnect status`
+    把明明存在的 provider 显示成"未注册"。这里补一条直接读 config.yaml 的兜底。
+    """
     try:
         from hermes_cli.config import load_config_readonly
+
         config = load_config_readonly() or {}
+        providers = config.get("providers")
+        if isinstance(providers, dict) and providers:
+            return sorted(providers)
+    except Exception:
+        pass
+
+    path = current_home() / "config.yaml"
+    try:
+        import yaml
+
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except Exception:
         return []
-    return sorted((config.get("providers") or {}).keys())
+    providers = data.get("providers") if isinstance(data, dict) else None
+    return sorted(providers) if isinstance(providers, dict) else []
 
 
 def auto_sync(manager) -> Optional[Dict[str, Any]]:

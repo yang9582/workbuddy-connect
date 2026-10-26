@@ -144,5 +144,38 @@ class ProfilesRootTests(unittest.TestCase):
                 )
 
 
+class RegisteredProvidersTests(unittest.TestCase):
+    def test_falls_back_to_config_yaml_outside_hermes(self) -> None:
+        try:
+            import hermes_cli  # noqa: F401
+        except Exception:
+            pass
+        else:
+            self.skipTest("测试环境里 Hermes 运行时可用，走的是另一条分支")
+
+        import os
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp) / "hermes"
+            home.mkdir()
+            (home / "config.yaml").write_text(
+                "providers:\n  workbuddy:\n    base_url: x\n  other:\n    base_url: y\n",
+                encoding="utf-8",
+            )
+            with mock.patch.dict(os.environ, {"HERMES_HOME": str(home)}):
+                self.assertEqual(providers_sync.registered_providers(), ["other", "workbuddy"])
+
+    def test_missing_config_returns_empty(self) -> None:
+        import os
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as tmp:
+            with mock.patch.dict(os.environ, {"HERMES_HOME": str(Path(tmp) / "nope")}):
+                self.assertEqual(providers_sync.registered_providers(), [])
+
+
 if __name__ == "__main__":
     unittest.main()
