@@ -150,13 +150,19 @@ hermes workbuddy doctor
 - 安装：在 DSH 的「插件」页安装本地包（指向该目录），或用 DSH 的
   `plugin_manager` `install_bundle`。装好后 DSH 记一条 `workbuddy-connect@2.1.0`
   （`source: link:…`），可启用/停用/卸载。
-- 它做四件事：
+- 它做五件事：
   1. 给 `llm-pi-ai` 加两个 provider；
   2. 把官方插件 `llm-workbuddy` 关掉（装了才写）；
   3. **输入框下方显示剩余积分与模型倍率**（Host 半提供同源 `GET /workbuddy/status`，
      Client 半注册到 `conversation.composer.dock`；点数字展开套餐余量与倍率，可手动刷新）；
   4. **设置 → 插件 → WorkBuddy 页**：账号、登录态、令牌有效期、积分与更新时间、
-     套餐余量、全量模型表（上下文 / 倍率 / 促销）。
+     套餐余量、全量模型表（上下文 / 倍率 / 促销）；
+  5. **模型选择器的菜单行显示倍率**：占用 `conversation.input.model.label`（同一席位服务
+     trigger / 菜单当前值 / 每行 option），在 WorkBuddy 模型名后追加 `· x0.11 · 夜间折扣`；
+     其它 provider 的模型名原样显示。
+- Client 文案走 DSH 的 locale 服务（namespace `workbuddy`，中英两套字典，按当前语言注册并保留
+  `en` 回退）；插件标题/描述在 `locale/{zh,en}.json` 的 `meta` 里。
+- 积分只取一次、不轮询（每次查询都会真实打到计费接口）；菜单行共享同一次请求。
 - 推理档位按优先级生成（`wbconnect dsh bundle` 时计算）：
   1. `effortOverrides`：桥接配置里的 `{"模型id": ["low","high"]}`，最高优先；
   2. 上游模型目录的 `reasoning.supportedEfforts`（权威，官方插件同源）；
@@ -290,6 +296,7 @@ node 路径与 Hermes 桌面插件。
 | DSH 插件页看不到 workbuddy-connect | 它默认没装；`wbconnect dsh bundle` 生成包，再到 DSH 插件页安装本地包（装好是 `link:` 到仓库目录） |
 | 不确定哪一环坏了 | `wbconnect doctor --all`：逐项给出桥接/探测/provider/部署/harness 状态与修复命令 |
 | DSH 输入框下方没有积分卡片 | 卡片由 bundle 的 Client 半提供：确认插件页里 `workbuddy-connect` 已启用；用 `curl http://127.0.0.1:<DSH端口>/workbuddy/status` 确认 Host 半就绪；必要时 disable→enable 该插件或重启 DSH |
+| DSH 模型菜单里模型名后没有倍率 | 该标签由 bundle 的 Client 半接管：**刷新页面**（或重启 DSH）加载新模块；只有 WorkBuddy 两个 provider 的模型会加倍率 |
 | DSH 模型选择器里没有推理档位 | 默认会强制写出 low/medium/high；若仍没有，检查桥接配置是不是 `effortPolicy: "declared"`、模型是否有 `reasoning` 字段；改完 `wbconnect dsh bundle` 并重启 DSH |
 | 401 | 目标 profile 的 `.env` 缺令牌：`hermes workbuddy sync --profiles <名字>`；DSH 则是 `~/.dsh/.env` 缺令牌，重跑 `install --harness dsh` |
 
@@ -300,7 +307,7 @@ cd "D:\Program Files\workbuddy-connect"
 python -m compileall -q workbuddy __init__.py
 python -m unittest discover -s tests -t . -v          # Python 单测（标准库 unittest）
 node --test bridge/test/*.test.mjs                    # 桥接单测（system-policy / kernel / cors / assemble）
-node --test dsh/workbuddy-connect/test/host.test.mjs  # DSH Host 半（积分/倍率裁剪）
+node --test dsh/workbuddy-connect/test/*.test.mjs     # DSH bundle：Host 半裁剪 + Client 半注册/本地化
 python -m workbuddy.cli_main status
 python -m workbuddy.cli_main doctor --all             # 端到端自检（改了配置先跑这个）
 python -m workbuddy.cli_main kernel                    # 内核来源与哈希
