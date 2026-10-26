@@ -1,24 +1,27 @@
 # WorkBuddy Connect
 
-**把 WorkBuddy / WorkBuddy AI 桌面版的模型，一行命令接进你正在用的 agent harness。**
-Hermes Agent、Claude Code、Codex CLI、OpenClaw、DeepSeek Harness（DSH）共用一套本地桥接；
-在 DSH 里还能直接在界面上看到**剩余积分、模型倍率**，并把**上下文窗口默认拉满**。
+**把 WorkBuddy / WorkBuddy AI 桌面版的模型接进 DeepSeek Harness（DSH）。**
+一套本地桥接 + 一个可安装的 DSH 插件：模型选择器里出现 WorkBuddy 分组，
+输入框左侧显示**剩余积分**，模型名后跟着**倍率**，**上下文窗口默认取最大值**。
+
+> 其它 harness（Hermes / Claude Code / Codex / OpenClaw）**正在开发中，本版本不做承诺**。
 
 ![license](https://img.shields.io/badge/license-MIT-blue)
 ![python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![node](https://img.shields.io/badge/node-18%2B-339933)
 ![platform](https://img.shields.io/badge/platform-Windows%20tested-lightgrey)
-![tests](https://img.shields.io/badge/tests-69%20Python%20%7C%2043%20Node-brightgreen)
+![tests](https://img.shields.io/badge/tests-74%20Python%20%7C%2043%20Node-brightgreen)
 
-> English TL;DR: A local OpenAI/Anthropic-compatible bridge that exposes WorkBuddy desktop models
-> to Hermes, Claude Code, Codex, OpenClaw and DeepSeek Harness — with a DSH plugin that shows
-> live credits, per-model rate multipliers, and uses the largest context window by default.
+> English TL;DR: A local bridge that exposes WorkBuddy desktop models to **DeepSeek Harness (DSH)**
+> as an installable plugin — with live credits in the composer, per-model rate multipliers in the
+> model menu, and the largest available context window by default.
+> Other harnesses (Hermes, Claude Code, Codex, OpenClaw) are **work in progress** and not part of
+> this release.
 >
 > Highlights: largest context window by default (up to 1M) · live credits & rate multipliers in
-> the DSH composer and model menu · one bridge for five harnesses · reasoning-effort tiers filled
-> in automatically · account-level model probing (skips `11158`) · fingerprint workarounds for the
-> CN upstream (`11128`) in one place · loopback-only with Bearer auth · `doctor --all` end-to-end
-> self-check.
+> the DSH composer and model menu · reasoning-effort tiers filled in automatically · account-level
+> model probing (skips `11158`) · fingerprint workarounds for the CN upstream (`11128`) in one
+> place · loopback-only with Bearer auth · `doctor --all` end-to-end self-check.
 
 ---
 
@@ -32,7 +35,7 @@ Hermes Agent、Claude Code、Codex CLI、OpenClaw、DeepSeek Harness（DSH）共
 | **剩余积分贴在模型名左边** | 输入框工具行最左侧、与模型选择器同一水平线显示 `WB 1,791 · WB AI 189`，悬停看各套餐余量，旁边 `↻` 手动刷新。**仅当当前会话选中 WorkBuddy / WorkBuddy AI 模型时才出现**，换其它模型这一行不占位；但数据仍然在加载时取一次（菜单里 WB 模型行的倍率要用），积分不做轮询。 |
 | **模型菜单直接标倍率** | 模型选择器里每一行都显示 `· x0.11 · 夜间折扣`，触发器和菜单当前值同样生效——选模型前就知道这模型贵不贵。 |
 | **设置页一张表看全** | 设置 → 插件 → WorkBuddy：账号、登录态、令牌有效期、积分与更新时间、套餐余量、全量模型表（上下文 / 倍率 / 促销）。 |
-| **一套桥接，五种 harness** | Hermes 原生插件、Claude Code（Anthropic `/v1/messages`）、Codex CLI、OpenClaw、DSH；外加任何支持自定义 OpenAI 兼容端点的产品（豆包等）。 |
+| **一套桥接，只接 DSH** | 桥接本身同时实现了 OpenAI 与 Anthropic 协议，但目前**只在 DSH 上验证并承诺**；其它 harness 的适配器仍是开发中状态，装了不保证能用。 |
 | **推理档位不掉队** | 优先用上游目录声明的 `supportedEfforts`；没声明的模型默认补 `low/medium/high`（`effortPolicy: "declared"` 可关），不会出现"别人能选档位、你不能"。 |
 | **账号权限探测** | 同步前用 `max_tokens=1` 逐个探测；上游返回 `11158`（套餐不含）的模型不写入 provider，避免"选中后才 400"。探测失败标为**未验证**，不当成可用。 |
 | **国内版指纹兼容** | 上游 `11128` 会按 system prompt 指纹拦截 agent harness。策略统一收敛在桥接一层（`defang` / `neutral` / `pass`），Hermes、Codex、Claude Code、DSH 共用，不用每个 harness 各打一份补丁。 |
@@ -50,8 +53,8 @@ Hermes Agent、Claude Code、Codex CLI、OpenClaw、DeepSeek Harness（DSH）共
 ## 🧭 工作原理
 
 ```
-harness（Hermes / Claude Code / Codex / OpenClaw / DSH / …）
-  └─ OpenAI /v1/chat/completions   或   Anthropic /v1/messages
+DeepSeek Harness（插件：模型分组 + 积分条 + 菜单倍率）
+  └─ OpenAI /v1/chat/completions（pi-ai provider，apiKeyEnv 取自 ~/.dsh/.env）
        └─ bridge（Node，127.0.0.1:39621 国内版 / 39622 国际版）  ← 本地 Bearer 鉴权
             └─ WorkBuddy 桌面登录态（加密凭据，经 App 自带 Electron 解密）
                  └─ copilot.tencent.com / www.workbuddy.ai
@@ -66,24 +69,37 @@ harness（Hermes / Claude Code / Codex / OpenClaw / DSH / …）
 - **图片输入**：OpenAI 路径原样转发（是否支持看模型）；Anthropic 路径上游没有对应能力，
   图片块替换为文本占位并在响应头标 `x-workbuddy-images: dropped`。
 
-## 🚀 快速开始
+## 🚀 快速开始（DSH）
 
-需要 **Python 3.10+** 和 **Node.js 18+**（桥接是 Node 写的，插件与 CLI 是 Python）。
+### 前置条件
+
+| 依赖 | 要求 | 说明 |
+|---|---|---|
+| **WorkBuddy 桌面版** | 已安装并**登录**（国内版 / 国际版任一或都装） | 桥接复用它的登录态；没装或没登录，后面一定失败 |
+| **Python** | 3.10+ | 运行 `wbconnect`（只用标准库，无需 pip 安装） |
+| **Node.js** | 18+ | 桥接运行时 |
+| **DeepSeek Harness** | 0.2.1-rc.x（已验证 rc.3） | 目标宿主 |
+
+### 四步
 
 ```bash
 git clone <your-repo-url> workbuddy-connect
 cd workbuddy-connect
 
-# 1) 启动本地桥接（国内版 + 国际版各一个实例，按需启动）
+# 1) 启动本地桥接（国内版 39621 / 国际版 39622，按需启动）
 python -m workbuddy.cli_main start
 
-# 2) 看状态：登录态 / 模型数 / 账号可用模型
+# 2) 确认登录态与模型数（失败会明确说是"未登录"还是"桥接没起来"）
 python -m workbuddy.cli_main status
 
-# 3) 装到你检测到的 harness（也可只装某一个）
-python -m workbuddy.cli_main install --harness all
-python -m workbuddy.cli_main install --harness claude,codex
+# 3) 生成 DSH bundle：写入 provider、上下文窗口、推理档位，
+#    同时把桥接令牌写进 ~/.dsh/.env（patch 里的 apiKeyEnv 从这里取值）
+python -m workbuddy.cli_main dsh bundle
 ```
+
+4）在 DSH 的「插件」页安装本地包，指向 `dsh/workbuddy-connect/`，然后重启 DSH。
+
+装好后模型选择器里会出现 **WorkBuddy / WorkBuddy AI** 分组；选中其中的模型，输入框左侧会出现积分条。
 
 不确定哪一步没通，先跑自检：
 
@@ -94,7 +110,7 @@ python -m workbuddy.cli_main doctor --all
 > 下文用 `wbconnect` 简写 `python -m workbuddy.cli_main`（需在仓库根目录执行）。
 > 也可以把 `bin/` 加进 `PATH`，直接用 `wbconnect status`（Windows 用 `bin\wbconnect.cmd`）。
 
-## 🧩 DeepSeek Harness（重点）
+## 🧩 DeepSeek Harness
 
 DSH 的接入不是"改配置文件"那么简单，我们做成了一个**可安装的 bundle**，装完会出现在
 DSH 的「插件」页，可启用/停用/卸载：
@@ -149,25 +165,28 @@ python -m workbuddy.cli_main dsh bundle
 curl http://127.0.0.1:<DSH端口>/workbuddy/status
 ```
 
-## 🔌 其它 harness
+## 🔌 其它 harness（开发中）
 
-| Harness | 接入方式 | 状态 |
+**当前只承诺 DSH。** 桥接本身同时实现了 OpenAI 与 Anthropic 两套协议，代码里也有
+Hermes / Claude Code / Codex / OpenClaw 的适配器，但它们**尚未在公开发布的标准上验证**，
+不作为本版本的支持范围：
+
+| Harness | 代码状态 | 发布状态 |
 |---|---|---|
-| **Hermes Agent** | 原生插件：3 个工具 + `on_session_start` + `/workbuddy` + 桌面 UI | ✅ 已验证 |
-| **Claude Code** | 写入 `~/.claude/settings.json` 的 `ANTHROPIC_*`，桥接提供 `/v1/messages` | ✅ 已验证（含工具调用） |
-| **Codex CLI** | 写入 `~/.codex/config.toml` 的 `model_providers.workbuddy` + `profiles.workbuddy` | ✅ 配置已验证 |
-| **OpenClaw** | 写出端点 JSON，需在其设置里手动添加 OpenAI 兼容 provider | ⚠️ 半自动 |
-| **DeepSeek Harness** | 可安装 bundle（见上）| ✅ 已验证 |
-| **豆包 / 其它** | `wbconnect endpoint` 输出 base_url / key / 模型列表，手填 | ⚠️ 通用方案 |
+| **DeepSeek Harness** | bundle + Host/Client 半 | ✅ 支持 |
+| Hermes Agent | 适配器与桌面 UI 已有 | 🚧 开发中，未验证 |
+| Claude Code | 适配器 + `/v1/messages` | 🚧 开发中，未验证 |
+| Codex CLI | 适配器 | 🚧 开发中，未验证 |
+| OpenClaw | 适配器（半自动） | 🚧 开发中，未验证 |
+| 豆包 / 其它 OpenAI 兼容端 | `wbconnect endpoint` 输出端点 | 🧪 可自行尝试，不保证 |
 
-细节：
+想接别的 harness，可以先用通用端点自己试：
 
-- **Hermes**：插件装到 `$HERMES_HOME/plugins/workbuddy/`（含 `--profiles all` 的所有 bot profile），
-  桌面 UI 由 `desktop/plugin.js` 提供（状态栏积分、模型菜单倍率、输入框 pill、设置页）。
-- **Claude Code**：`ANTHROPIC_BASE_URL` 不要带 `/v1`；`claude-*` 模型名会映射到真实 WorkBuddy 模型；
-  原设置备份为 `settings.json.workbuddy-backup`。
-- **Codex**：`codex --profile workbuddy`；原配置备份为 `config.toml.workbuddy-backup`。
-- **OpenClaw**：端点写到 `~/.openclaw/workbuddy-connect.json`，需手动添加 provider。
+```bash
+python -m workbuddy.cli_main endpoint --show-token   # 输出 base_url / key / 模型列表
+```
+
+但请把 issue 里的问题限定在 DSH 范围内，否则很难复现。
 
 ## 🛠️ CLI
 
@@ -177,27 +196,19 @@ python -m workbuddy.cli_main <command>
 
 | 命令 | 作用 |
 |---|---|
-| `status` | 桥接状态 + 各 harness 配置状态 |
+| `status` | 桥接状态 + 登录态 + 模型数 |
 | `start` / `stop` / `restart` | 启停桥接实例 |
 | `models [--instance]` | 列出模型 |
 | `probe --effort [--reprobe]` | 探测哪些模型真正校验 `reasoning_effort`（结果供 DSH 生成使用） |
 | `endpoint [--show-token]` | 打印 OpenAI 兼容端点（令牌默认打码） |
-| `sync [--profiles all] [--reprobe] [--no-probe]` | 刷新 Hermes provider |
-| `install --harness …` / `uninstall --harness …` | 安装/移除各 harness 配置 |
-| `harnesses` | 列出支持的 harness 与检测结果 |
-| `dsh [status\|bundle\|restore]` | DSH 接入状态 / 生成 bundle / 恢复旧补丁 |
-| `kernel [--refresh]` | 桥接内核来源与哈希；升级内核后重新提取并校验导出 |
+| `dsh [status\|bundle\|restore]` | **DSH 接入状态 / 生成 bundle / 恢复旧补丁** |
 | `doctor` / `doctor --all [--json]` | 桥接自检 / 端到端检查 |
+| `kernel [--refresh]` | 桥接内核来源与哈希；升级内核后重新提取并校验导出 |
 | `logs` | 查看桥接日志 |
-
-Hermes 内另有 `/workbuddy status|start|stop|sync|logs` 斜杠命令。
+| `install --harness …` / `uninstall --harness …` | 其它 harness 的安装器（开发中） |
+| `sync [--profiles all]` | 刷新 Hermes provider（开发中） |
 
 ## ⚙️ 配置
-
-### Hermes 插件设置
-`plugins.entries.workbuddy.settings.*`：`autostart`、`auto_sync`、`enable_cn`、`enable_ai`、
-`port_cn`、`port_ai`、`data_dir`、`node_path`、`electron_bin_cn`、`electron_bin_ai`、
-`probe_models`、`sync_profiles`。
 
 ### 桥接配置（数据目录）
 
@@ -230,15 +241,15 @@ python -m workbuddy.cli_main doctor --all --json   # 给脚本用
 ```
 
 覆盖：桥接监听 / healthz / 登录态 / 本地令牌 / 内核哈希 / system 策略 / 模型探测
-（可用·无权限·未验证）/ 每个 Hermes profile 的 provider 与 `.env` 令牌 /
-Claude Code / Codex / OpenClaw / DSH（bundle、旧补丁残留）/ 部署版本漂移 / node 与桌面插件。
+（可用·无权限·未验证）/ DSH（bundle、patch 是否存在、旧补丁残留）/ 部署版本漂移 / node 与桌面插件。
+开发中的 harness（Hermes / Claude Code / Codex / OpenClaw）也会顺带检查，但不在支持范围内。
 
 ## 🔧 故障排查
 
 | 现象 | 处理 |
 |---|---|
-| `11128 request illegal / unapproved channel` | system prompt 命中上游指纹：确认内核是 0.7.9+，把 `systemPolicy` 设为 `defang`（国内版默认）或让 Claude Code 用默认 `neutral`；`wbconnect restart` |
-| `11158 not allowed for user type` | 该模型不在账号套餐内；`wbconnect sync --reprobe` 会剔除 |
+| `11128 request illegal / unapproved channel` | system prompt 命中上游指纹：确认内核是 0.7.9+，把 `systemPolicy` 设为 `defang`（国内版默认）；`wbconnect restart` |
+| `11158 not allowed for user type` | 该模型不在账号套餐内；`wbconnect install --harness dsh` 会重新探测并剔除（bundle 用 `dsh bundle` 重生成） |
 | `WorkBuddy 内核契约不匹配` | `wbconnect kernel` 看记录，`wbconnect kernel --refresh` 重新提取并校验导出 |
 | `502 transport error: fetch failed` | 本机到 `www.workbuddy.ai` 不通（代理/DNS），与插件无关；恢复后 `wbconnect restart` |
 | DSH 里没有 WorkBuddy 分组 | 重启 DSH；`wbconnect dsh status` 看 `mode`；`~/.dsh/.env` 要有 `WORKBUDDY_BRIDGE_TOKEN` |
@@ -260,10 +271,9 @@ python -m workbuddy.cli_main doctor --all
 仓库结构（简版）：
 
 ```
-workbuddy/            Python 核心：进程管理、provider 同步、CLI、各 harness 适配器
+workbuddy/            Python 核心：进程管理、CLI、DSH 适配器（其余 harness 适配器为开发中）
 bridge/               Node 桥接：OpenAI + Anthropic 双协议、目录/积分/策略
 dsh/workbuddy-connect DSH bundle：声明式 patch + Host 半 + Client 半
-desktop/plugin.js     Hermes 桌面 UI
 vendor/               第三方内核与离线包（见 THIRD_PARTY_NOTICES.txt）
 tests/                单元测试（标准库 unittest，无第三方依赖）
 ```
@@ -275,15 +285,15 @@ tests/                单元测试（标准库 unittest，无第三方依赖）
 
 | | dsh-workbuddy-connect | 本项目 |
 |---|---|---|
-| 目标 harness | 只有 DSH | Hermes / Claude Code / Codex / OpenClaw / DSH |
+| 目标 harness | 只有 DSH | DSH（其它开发中，不承诺） |
 | DSH 接入方式 | 插件（peerDependencies 精确绑定内核版本） | 声明式 bundle（只依赖 `llm-pi-ai` 配置），可随时 `dsh bundle` 重生成 |
 | 升级 DSH 内核 | 需要匹配的插件版本 | 只有桥接内核需要跟（`kernel --refresh` + 契约守卫） |
-| 积分/倍率展示 | DSH 内卡片 | DSH 卡片 + 菜单倍率 + Hermes 桌面 UI |
+| 积分/倍率展示 | DSH 内卡片 | 输入框左侧积分条 + 菜单行倍率 + 设置页全量表 |
 | 上下文窗口 | 国际版提供开关 | 默认取最大，可按模型覆盖（`contextWindowOverrides`） |
-| 排障 | 插件自带 doctor | `doctor --all` 覆盖桥接 → provider → 各 harness 整条链路 |
+| 排障 | 插件自带 doctor | `doctor --all` 覆盖桥接 → provider → bundle 整条链路 |
 
-如果你只用 DSH、且想要最全的插件内功能，直接用上游插件更省事；如果你要跨 harness 复用、
-或者希望"DSH 升级不用等插件适配"，本项目更合适。
+如果你只用 DSH、且想要最全的插件内功能（模型显隐、企业额度、图片输入），直接用上游插件更省事；
+如果你更在意"DSH 升级后不用等插件适配"、以及想把倍率和积分直接摆在输入框旁边，可以试本项目。
 
 ## ⚠️ 限制与免责声明
 
@@ -291,7 +301,9 @@ tests/                单元测试（标准库 unittest，无第三方依赖）
 - **依赖非公开接口**：桥接复用 WorkBuddy 桌面客户端的登录态与私有 API，**客户端大版本更新后
   可能失效**，届时需要更新 `bridge/vendor/host-bundle.js`（`wbconnect kernel --refresh`）。
 - **图片输入不完整**：OpenAI 路径原样转发（看模型是否支持）；Anthropic 路径会把图片替换成
-  文本占位，Claude Code 粘贴截图不会真的送图。
+  文本占位并在响应头标 `x-workbuddy-images: dropped`。
+- **只支持 DSH**：其它 harness 的适配器还在开发中，接口可能变，不保证可用。
+- **只测过 Windows**：路径与进程管理在 Windows 上验证；macOS / Linux 未验证。
 - **DSH 里没有"模型显隐/窗口下拉"**：这两项依赖 DSH 插件把 provider 程序化注册，本项目为了
   避开版本耦合只做配置化 + 设置页展示。
 - **个人使用定位**：请自行确认符合 WorkBuddy 的服务条款与所在地区法规；不要用于商业转售、
