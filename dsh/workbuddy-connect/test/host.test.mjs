@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { dataDir, providersRegistered, readConfig, summarize } from "../index.js";
+import { apply, dataDir, providersRegistered, readConfig, summarize } from "../index.js";
 
 test("dataDir honours WORKBUDDY_BRIDGE_DATA", () => {
   const previous = process.env.WORKBUDDY_BRIDGE_DATA;
@@ -84,4 +84,64 @@ test("providersRegistered 拿不到信息时返回 null（不误报）", () => {
   assert.equal(providersRegistered({}), null);
   assert.equal(providersRegistered({ listProviders: () => null }), null);
   assert.equal(providersRegistered({ listProviders: () => { throw new Error("boom"); } }), null);
+});
+
+function makeCtx() {
+  const routes = [];
+  const ctx = {
+    effect: (fn) => { fn(); },
+    webServer: {
+      register: (route) => {
+        routes.push(route);
+        return () => {};
+      },
+    },
+    get: () => null,
+  };
+  return { ctx, routes };
+}
+
+function makeRes() {
+  return {
+    status: 0,
+    headers: {},
+    body: "",
+    writeHead(status, headers) { this.status = status; this.headers = headers; },
+    end(body) { this.body = body; },
+  };
+}
+
+test("apply 注册三条 exact 路由（单条 exact 覆盖不了多个路径）", () => {
+  const { ctx, routes } = makeCtx();
+  apply(ctx);
+  assert.deepEqual(
+    routes.map((route) => `${route.kind} ${route.path}`).sort(),
+    ["exact /workbuddy/beacon", "exact /workbuddy/client-beacon", "exact /workbuddy/status"],
+  );
+});
+
+test("beacon 路由可写可读，初始为空", async () => {
+  const { ctx, routes } = makeCtx();
+  apply(ctx);
+  const readRoute = routes.find((route) => route.path === "/workbuddy/beacon").handler;
+  const writeRoute = routes.find((route) => route.path === "/workbuddy/client-beacon").handler;
+
+  let res = makeRes();
+  readRoute({ method: "GET", url: "/workbuddy/beacon" }, res);
+  assert.equal(res.status, 200);
+  assert.deepEqual(JSON.parse(res.body), { beacon: null });
+
+  const { Readable } = await import("node:stream");
+  const req = Readable.from([JSON.stringify({ build: "2.1.0+test", slots: [] })]);
+  req.method = "POST";
+  req.url = "/workbuddy/client-beacon";
+  res = makeRes();
+  await writeRoute(req, res);
+  assert.equal(res.status, 200);
+  assert.deepEqual(JSON.parse(res.body), { ok: true });
+
+  res = makeRes();
+  readRoute({ method: "GET", url: "/workbuddy/beacon" }, res);
+  const payload = JSON.parse(res.body);
+  assert.equal(payload.beacon.body.build, "2.1.0+test");
 });

@@ -164,45 +164,50 @@ export function apply(ctx) {
   let cache = { at: 0, data: null };
   // Client 半启动时回报一次"注册结果 + 构建标记"，用于判断浏览器加载的是哪一版模块。
   let beacon = null;
-  ctx.effect(() => ctx.webServer.register({
-    // prefix：一个 handler 覆盖 /workbuddy/status、/workbuddy/beacon、/workbuddy/client-beacon。
-    // 用 exact + 单一路径时，另外两个路径根本进不来（会被 fallback 吃掉，返回 404）。
-    kind: "prefix",
-    path: "/workbuddy/",
-    handler: async (req, res) => {
-      try {
-        const url = new URL(req.url ?? "/", "http://localhost");
-        if (req.method === "POST" && url.pathname === "/workbuddy/client-beacon") {
-          const body = await readJsonBody(req);
-          beacon = { at: new Date().toISOString(), body: body === null ? null : body };
-          sendJson(res, 200, { ok: true });
-          return;
-        }
-        if (req.method === "GET" && url.pathname === "/workbuddy/beacon") {
-          sendJson(res, 200, { beacon });
-          return;
-        }
-        if (url.pathname !== "/workbuddy/status") {
-          sendJson(res, 404, { error: `no such route: ${url.pathname}` });
-          return;
-        }
-        const refresh = url.searchParams.get("refresh") === "1";
-        const now = Date.now();
-        if (!refresh && cache.data !== null && now - cache.at < CACHE_MS) {
-          sendJson(res, 200, cache.data);
-          return;
-        }
-        const data = await collectStatus({ refresh });
-        // 顺带告诉 UI：provider 是否已经注册进 DSH（未生成 patch 时会是 false）
-        let llm = null;
-        try { llm = ctx.get("llm"); } catch { llm = null; }
-        data.providerRegistered = providersRegistered(llm);
-        cache = { at: Date.now(), data };
-        sendJson(res, 200, data);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        sendJson(res, 500, { error: message.slice(0, 200) });
+
+  const statusHandler = async (req, res) => {
+    try {
+      const url = new URL(req.url ?? "/", "http://localhost");
+      const refresh = url.searchParams.get("refresh") === "1";
+      const now = Date.now();
+      if (!refresh && cache.data !== null && now - cache.at < CACHE_MS) {
+        sendJson(res, 200, cache.data);
+        return;
       }
-    },
-  }));
+      const data = await collectStatus({ refresh });
+      // 顺带告诉 UI：provider 是否已经注册进 DSH（未生成 patch 时会是 false）
+      let llm = null;
+      try { llm = ctx.get("llm"); } catch { llm = null; }
+      data.providerRegistered = providersRegistered(llm);
+      cache = { at: Date.now(), data };
+      sendJson(res, 200, data);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      sendJson(res, 500, { error: message.slice(0, 200) });
+    }
+  };
+
+  const beaconWriteHandler = async (req, res) => {
+    const body = await readJsonBody(req);
+    beacon = { at: new Date().toISOString(), body: body === null ? null : body };
+    sendJson(res, 200, { ok: true });
+  };
+
+  const beaconReadHandler = (_req, res) => {
+    sendJson(res, 200, { beacon });
+  };
+
+  // 三个独立 exact 路由：单条 exact 只匹配一个 path，其它路径会被 SPA fallback 吃掉（404）。
+  ctx.effect(() => {
+    const disposers = [
+      ctx.webServer.register({ kind: "exact", path: "/workbuddy/status", handler: statusHandler }),
+      ctx.webServer.register({ kind: "exact", path: "/workbuddy/beacon", handler: beaconReadHandler }),
+      ctx.webServer.register({ kind: "exact", path: "/workbuddy/client-beacon", handler: beaconWriteHandler }),
+    ];
+    return () => {
+      for (const dispose of disposers) {
+        try { dispose(); } catch { /* 卸载时忽略单个失败 */ }
+      }
+    };
+  });
 }

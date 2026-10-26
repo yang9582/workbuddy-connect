@@ -8,7 +8,7 @@ Hermes Agent、Claude Code、Codex CLI、OpenClaw、DeepSeek Harness（DSH）共
 ![python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![node](https://img.shields.io/badge/node-18%2B-339933)
 ![platform](https://img.shields.io/badge/platform-Windows%20tested-lightgrey)
-![tests](https://img.shields.io/badge/tests-69%20Python%20%7C%2041%20Node-brightgreen)
+![tests](https://img.shields.io/badge/tests-69%20Python%20%7C%2043%20Node-brightgreen)
 
 > English TL;DR: A local OpenAI/Anthropic-compatible bridge that exposes WorkBuddy desktop models
 > to Hermes, Claude Code, Codex, OpenClaw and DeepSeek Harness — with a DSH plugin that shows
@@ -253,7 +253,7 @@ Claude Code / Codex / OpenClaw / DSH（bundle、旧补丁残留）/ 部署版本
 python -m compileall -q workbuddy __init__.py
 python -m unittest discover -s tests -t . -v          # Python：69 项
 node --test bridge/test/*.test.mjs                    # 桥接：31 项（策略/内核/CORS/SSE 拼装/模型字段）
-node --test dsh/workbuddy-connect/test/*.test.mjs     # bundle：10 项（Host 裁剪/自检 + Client 注册）
+node --test dsh/workbuddy-connect/test/*.test.mjs     # bundle：12 项（Host 路由/裁剪/自检 + Client 注册）
 python -m workbuddy.cli_main doctor --all
 ```
 
