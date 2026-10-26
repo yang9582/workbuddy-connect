@@ -56,6 +56,9 @@ DEFAULTS: Dict[str, Any] = {
 }
 
 START_TIMEOUT_S = 45.0
+PROBE_WORKERS = 2
+PROBE_RETRY_DELAY_S = 1.5
+LOG_ROTATE_BYTES = 5 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -374,25 +377,33 @@ class BridgeManager:
                 headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
                 method="POST",
             )
-            try:
-                with urllib.request.urlopen(req, timeout=60) as resp:
-                    resp.read()
-                    return model_id, "ok"
-            except urllib.error.HTTPError as exc:
-                raw = ""
+            # 上游偶发限流（429）：退避后重试一次；仍失败记为 unknown（"未验证"），
+            # 不会当成可用，也不会把模型误判成无权限。
+            for attempt in (1, 2):
                 try:
-                    raw = exc.read().decode("utf-8", "replace")
+                    with urllib.request.urlopen(req, timeout=60) as resp:
+                        resp.read()
+                        return model_id, "ok"
+                except urllib.error.HTTPError as exc:
+                    raw = ""
+                    try:
+                        raw = exc.read().decode("utf-8", "replace")
+                    except Exception:
+                        pass
+                    if exc.code == 429 and attempt == 1:
+                        time.sleep(PROBE_RETRY_DELAY_S)
+                        continue
+                    low = raw.lower()
+                    if "11158" in low or "not allowed" in low:
+                        return model_id, "blocked"
+                    return model_id, "unknown"
                 except Exception:
-                    pass
-                low = raw.lower()
-                if "11158" in low or "not allowed" in low:
-                    return model_id, "blocked"
-                return model_id, "unknown"
-            except Exception:
-                return model_id, "unknown"
+                    return model_id, "unknown"
+            return model_id, "unknown"
 
         results: Dict[str, str] = {}
-        with ThreadPoolExecutor(max_workers=4) as pool:
+        # 并发压到 2：探测是真实对话请求，4 并发容易触发上游限流，把结果打成一片 unknown
+        with ThreadPoolExecutor(max_workers=PROBE_WORKERS) as pool:
             for model_id, verdict in pool.map(probe_one, [row["id"] for row in models]):
                 results[model_id] = verdict
         try:
@@ -529,6 +540,7 @@ class BridgeManager:
             flags = 0
             if os.name == "nt":
                 flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
+            self._rotate_log(inst)
             log_file = open(self.log_path(inst), "ab")
             try:
                 proc = subprocess.Popen(
@@ -648,6 +660,22 @@ class BridgeManager:
             return "\n".join(data[-max(1, int(lines)):])
         except Exception:
             return "(暂无日志)"
+
+    def _rotate_log(self, inst: Instance) -> None:
+        """启动前轮转一次：超过 5MB 就把旧日志挪到 `<name>.1`（只保留一份）。
+
+        桥接是常驻进程，日志只追加不轮转；长期运行会把磁盘写满。
+        """
+        path = self.log_path(inst)
+        try:
+            if not path.is_file() or path.stat().st_size < LOG_ROTATE_BYTES:
+                return
+            backup = path.with_name(path.name + ".1")
+            if backup.exists():
+                backup.unlink()
+            path.rename(backup)
+        except Exception:
+            pass  # 轮转失败不应该阻止启动
 
     # ─────────────────────────── 会话钩子 ───────────────────────────
 

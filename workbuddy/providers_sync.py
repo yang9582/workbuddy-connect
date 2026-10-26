@@ -236,11 +236,17 @@ def sync_instance(
         "models": _models_payload(allowed),
     }
     _set(inst.token_env, token, profile)  # 写进该 profile 的 .env（不打印值）
-    _set(f"providers.{inst.key}", json.dumps(payload, ensure_ascii=True), profile)
-
-    verified = _get(f"providers.{inst.key}.base_url", profile)
-    if verified and verified != payload["base_url"]:
-        raise RuntimeError(f"{inst.key}: 写入后校验失败（base_url={verified}）")
+    provider_key = f"providers.{inst.key}"
+    try:
+        _set(provider_key, json.dumps(payload, ensure_ascii=True), profile)
+        verified = _get(f"{provider_key}.base_url", profile)
+        if verified and verified != payload["base_url"]:
+            raise RuntimeError(f"{inst.key}: 写入后校验失败（base_url={verified}）")
+    except Exception:
+        # 事务回滚：无法可靠还原任意旧值，直接移除半写入的 provider，
+        # 让目标 profile 回到"没有这个 provider"的干净状态，而不是留一份坏配置。
+        _unset(provider_key, profile)
+        raise
     return {
         "provider": inst.key,
         "instance": inst.key,
@@ -251,6 +257,7 @@ def sync_instance(
         "model_default": model,
         "base_url": payload["base_url"],
         "token_env": inst.token_env,
+        "verified": True,
     }
 
 

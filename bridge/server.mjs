@@ -40,6 +40,7 @@ import {
 } from "./lib/kernel.mjs";
 import { applyChatBody, applyMessages, resolveSystemPolicy } from "./lib/system-policy.mjs";
 import { sanitizeSystemText } from "./lib/system-text.mjs";
+import { corsHeadersFor } from "./lib/cors.mjs";
 import { loadDshEnv } from "./lib/dsh-env.mjs";
 
 // 与 DSH 插件同源的 WORKBUDDY* 变量（Electron 二进制路径等）先加载，
@@ -278,12 +279,11 @@ async function statusPayload({ force = false } = {}) {
 
 // ─────────────────────────── HTTP 工具 ───────────────────────────
 
-/** 桌面插件的渲染进程是跨源请求（本地 127.0.0.1），需要放行 CORS；鉴权仍走 Bearer。 */
-function applyCors(res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Max-Age", "600");
+/** 桌面插件的渲染进程是跨源请求（本地 127.0.0.1），需要放行 CORS；鉴权仍走 Bearer。
+ *  只对本地来源回发 CORS 头（见 lib/cors.mjs），远端网页读不到响应。 */
+function applyCors(req, res) {
+  const headers = corsHeadersFor(req.headers.origin);
+  for (const [name, value] of Object.entries(headers)) res.setHeader(name, value);
 }
 
 function log(...args) {
@@ -407,7 +407,7 @@ async function handle(req, res) {
     log(`request ${req.method} ${url} anthropic=${req.headers["anthropic-version"] ?? "-"}`);
   }
   try {
-    applyCors(res);
+    applyCors(req, res);
     if (req.method === "OPTIONS") {
       res.writeHead(204);
       res.end();
@@ -958,6 +958,10 @@ async function anthropicMessages(req, res) {
     const serialized = JSON.stringify(openaiBody);
     log(`anthropic->openai ${serialized.length} bytes model=${openaiBody.model} tools=${Array.isArray(openaiBody.tools) ? openaiBody.tools.length : 0} msgs=${openaiBody.messages.length} max_tokens=${openaiBody.max_tokens ?? "-"}`);
     log(`body head: ${serialized.slice(0, 400)}`);
+  }
+  // 完整 body / system prompt 落盘属于敏感数据，必须显式开启（WORKBUDDY_BRIDGE_DUMP=1），
+  // 不能因为开了 DEBUG 日志就顺带写出来。
+  if (process.env.WORKBUDDY_BRIDGE_DUMP === "1") {
     try {
       mkdirSync(STATE_DIR, { recursive: true });
       const systemMessage = openaiBody.messages.find((m) => m.role === "system");

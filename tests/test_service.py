@@ -124,5 +124,37 @@ class StartPortTests(unittest.TestCase):
         self.assertIn("占用", str(ctx.exception))
 
 
+class LogRotationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.manager = make_manager(self.tmp.name)
+
+    def test_rotates_oversized_log(self) -> None:
+        path = self.manager.log_path(INST)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("x" * (service.LOG_ROTATE_BYTES + 10), encoding="utf-8")
+        self.manager._rotate_log(INST)
+        self.assertFalse(path.exists())
+        self.assertTrue(path.with_name(path.name + ".1").exists())
+
+    def test_small_log_is_left_alone(self) -> None:
+        path = self.manager.log_path(INST)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("small", encoding="utf-8")
+        self.manager._rotate_log(INST)
+        self.assertTrue(path.exists())
+        self.assertFalse(path.with_name(path.name + ".1").exists())
+
+    def test_rotation_replaces_previous_backup(self) -> None:
+        path = self.manager.log_path(INST)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("new" * (service.LOG_ROTATE_BYTES // 2), encoding="utf-8")
+        backup = path.with_name(path.name + ".1")
+        backup.write_text("old", encoding="utf-8")
+        self.manager._rotate_log(INST)
+        self.assertEqual(backup.read_text(encoding="utf-8"), "new" * (service.LOG_ROTATE_BYTES // 2))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -229,6 +229,9 @@ def _install(manager, spec: str) -> str:
             shutil.copytree(source, dest, ignore=shutil.ignore_patterns(
                 ".git", "__pycache__", "*.pyc", "scripts", "tests",
             ))
+            from . import __version__
+
+            (dest / ".workbuddy-version").write_text(f"{__version__}\n", encoding="utf-8")
         except Exception as exc:  # noqa: BLE001
             lines.append(f"[{profile}] 复制失败: {exc}")
             continue

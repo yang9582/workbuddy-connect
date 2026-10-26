@@ -73,6 +73,38 @@ class SyncInstanceTests(unittest.TestCase):
         self.assertEqual(result["models_unverified"], ["c"], "探测失败要显式告知，而不是当成可用")
 
 
+class SyncRollbackTests(unittest.TestCase):
+    def test_provider_write_failure_removes_partial_config(self) -> None:
+        manager = FakeManager()
+        with mock.patch.object(providers_sync, "_set", side_effect=[None, RuntimeError("boom")]), \
+             mock.patch.object(providers_sync, "_get", return_value=""), \
+             mock.patch.object(providers_sync, "_unset", return_value=True) as unset:
+            with self.assertRaises(RuntimeError):
+                providers_sync.sync_instance(INST, manager, None, probe=False)
+        unset.assert_called_once_with("providers.workbuddy", None)
+
+    def test_verify_mismatch_removes_partial_config(self) -> None:
+        manager = FakeManager()
+        with mock.patch.object(providers_sync, "_set") as set_mock, \
+             mock.patch.object(providers_sync, "_get", side_effect=["", "http://127.0.0.1:1/v1"]), \
+             mock.patch.object(providers_sync, "_unset", return_value=True) as unset:
+            with self.assertRaises(RuntimeError) as ctx:
+                providers_sync.sync_instance(INST, manager, None, probe=False)
+        self.assertIn("校验失败", str(ctx.exception))
+        self.assertEqual(set_mock.call_count, 2)
+        unset.assert_called_once_with("providers.workbuddy", None)
+
+    def test_success_writes_token_then_provider(self) -> None:
+        manager = FakeManager()
+        with mock.patch.object(providers_sync, "_set") as set_mock, \
+             mock.patch.object(providers_sync, "_get", side_effect=["", "http://127.0.0.1:39621/v1"]), \
+             mock.patch.object(providers_sync, "_unset") as unset:
+            result = providers_sync.sync_instance(INST, manager, None, probe=False)
+        self.assertTrue(result["verified"])
+        self.assertEqual(set_mock.call_count, 2)
+        unset.assert_not_called()
+
+
 class SyncProbeSettingTests(unittest.TestCase):
     def test_default_probe_follows_plugin_setting(self) -> None:
         manager = FakeManager(setting=False)

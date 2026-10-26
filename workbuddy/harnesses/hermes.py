@@ -8,11 +8,12 @@ import subprocess
 from pathlib import Path
 from typing import Any, Dict, List
 
-from .. import providers_sync
+from .. import __version__, providers_sync
 from .base import HarnessAdapter
 
 PLUGIN_ID = "workbuddy"
 LEGACY_DESKTOP_ID = "workbuddy-status"
+VERSION_MARKER = ".workbuddy-version"
 
 
 class HermesAdapter(HarnessAdapter):
@@ -66,8 +67,10 @@ class HermesAdapter(HarnessAdapter):
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copytree(
                 repo, dest,
-                ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc", "scripts"),
+                ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc", "scripts", "tests"),
             )
+            # 版本标记：doctor 用它判断 profile 里的副本是否落后于仓库
+            (dest / VERSION_MARKER).write_text(f"{__version__}\n", encoding="utf-8")
             # 桌面半：Electron 从 desktop-plugins 加载
             desktop_dir = home / "desktop-plugins" / PLUGIN_ID
             if desktop_dir.exists():
@@ -103,7 +106,20 @@ class HermesAdapter(HarnessAdapter):
         info = super().status()
         base = self.hermes_home()
         installed = (base / "plugins" / PLUGIN_ID / "plugin.yaml").is_file()
-        info.update({"home": str(base), "plugin_installed": installed,
-                     "configured": installed,
-                     "desktop_half": (base / "desktop-plugins" / PLUGIN_ID / "plugin.js").is_file()})
+        marker = base / "plugins" / PLUGIN_ID / VERSION_MARKER
+        installed_version = ""
+        if marker.is_file():
+            try:
+                installed_version = marker.read_text(encoding="utf-8").strip()
+            except Exception:
+                installed_version = ""
+        info.update({
+            "home": str(base),
+            "plugin_installed": installed,
+            "configured": installed,
+            "installed_version": installed_version,
+            "repo_version": __version__,
+            "stale": bool(installed and installed_version != __version__),
+            "desktop_half": (base / "desktop-plugins" / PLUGIN_ID / "plugin.js").is_file(),
+        })
         return info

@@ -123,7 +123,9 @@ def main(argv: List[str] | None = None) -> int:
     sub.add_parser("start", help="启动桥接实例")
     sub.add_parser("stop", help="停止桥接实例")
     sub.add_parser("restart", help="重启桥接实例")
-    sub.add_parser("doctor", help="运行桥接自检")
+    doctor_parser = sub.add_parser("doctor", help="桥接自检；--all 检查整条链路")
+    doctor_parser.add_argument("--all", action="store_true", help="端到端检查（桥接/名 profile/harness）")
+    doctor_parser.add_argument("--json", action="store_true", help="配合 --all 输出 JSON")
 
     models = sub.add_parser("models", help="列出模型")
     models.add_argument("--instance", default="", help="workbuddy | workbuddy-ai")
@@ -195,6 +197,12 @@ def main(argv: List[str] | None = None) -> int:
                 print(f"[{inst.label}] 重启失败: {exc}")
         return 0
     if cmd == "doctor":
+        if getattr(args, "all", False):
+            from . import doctor
+
+            report = doctor.collect(manager)
+            print(json.dumps(report, ensure_ascii=False, indent=2) if args.json else doctor.render(report))
+            return 0 if report["ok"] else 1
         print(hermes_cli._doctor(manager))  # noqa: SLF001
         return 0
     if cmd == "models":

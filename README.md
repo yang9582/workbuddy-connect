@@ -186,7 +186,8 @@ hermes workbuddy doctor
 | `harnesses` | 列出支持的 harness 与检测结果 |
 | `kernel [--refresh]` | 查看桥接内核来源；`--refresh` 从已安装插件重新提取并验证导出 |
 | `dsh [status\|bundle\|restore]` | DSH 接入状态；生成/刷新 bundle 包；恢复旧补丁改过的插件文件 |
-| `doctor` / `logs` | 自检 / 日志 |
+| `doctor` / `doctor --all [--json]` | 桥接自检 / 端到端检查（桥接、探测、各 profile、harness、bundle） |
+| `logs` | 查看桥接日志（超过 5MB 启动时自动轮转到 `.1`） |
 
 Hermes 内另有 `/workbuddy status|start|stop|sync|logs` 斜杠命令。
 
@@ -214,6 +215,30 @@ Hermes 内另有 `/workbuddy status|start|stop|sync|logs` 斜杠命令。
 端口优先级：`WORKBUDDY_BRIDGE_PORT` 环境变量 > 配置文件 > 默认 39621。
 插件启动桥接时会同时传环境变量并校正配置文件，改端口不再需要手工删 `config.json`。
 
+### 安全与日志
+
+- **CORS 只放行本地来源**：`file://`、`app://`、`null`（Electron 渲染进程）与
+  localhost / 127.0.0.1。其他网页拿不到 `Access-Control-Allow-Origin`，即使能发请求
+  也读不到响应；非浏览器客户端（curl / pi-ai / Hermes 后端）不带 Origin，不受影响。
+- **调试转储默认关闭**：完整 Anthropic 请求体（含 system prompt 与工具）只在
+  `WORKBUDDY_BRIDGE_DUMP=1` 时写进 `state/last-anthropic-*.json`；
+  `WORKBUDDY_BRIDGE_DEBUG=1` 只影响日志详细程度。
+- **日志轮转**：每次启动桥接前，超过 5MB 的日志挪到 `<name>.1`（只保留一份）。
+- **探测限流**：账号权限探测并发为 2，遇到 429 退避 1.5s 重试一次；
+  仍失败的模型记为"未验证"，不会当成可用，也不会误判成无权限。
+
+### 自检
+
+```bash
+python -m workbuddy.cli_main doctor --all          # 表格，失败时退出码 1
+python -m workbuddy.cli_main doctor --all --json   # 给脚本用
+```
+
+检查项：桥接监听 / healthz / 登录态 / 本地令牌 / 内核哈希 / system 策略、
+模型探测（可用 / 无权限 / 未验证）、每个 Hermes profile 的 provider 与 `.env` 令牌、
+Claude Code / Codex / OpenClaw / DSH（bundle、旧补丁残留、官方插件）、
+node 路径与 Hermes 桌面插件。
+
 ## 7. 迁移 / 数据
 
 - 仓库已从 `C:\Users\zxtqj\projects\hermes-workbuddy` 迁到
@@ -235,6 +260,7 @@ Hermes 内另有 `/workbuddy status|start|stop|sync|logs` 斜杠命令。
 | Hermes 工具没出现 | 插件是否在该 profile 启用；`hermes plugins list` |
 | DSH 模型选择器里没有 WorkBuddy 分组 | 先重启 DSH；`wbconnect dsh status` 看 `mode`（`bundle` / `profile-patch`）；`~/.dsh/.env` 里要有 `WORKBUDDY_BRIDGE_TOKEN`；桥接需在跑（`wbconnect start`） |
 | DSH 插件页看不到 workbuddy-connect | 它默认没装；`wbconnect dsh bundle` 生成包，再到 DSH 插件页安装本地包（装好是 `link:` 到仓库目录） |
+| 不确定哪一环坏了 | `wbconnect doctor --all`：逐项给出桥接/探测/provider/部署/harness 状态与修复命令 |
 | 401 | 目标 profile 的 `.env` 缺令牌：`hermes workbuddy sync --profiles <名字>`；DSH 则是 `~/.dsh/.env` 缺令牌，重跑 `install --harness dsh` |
 
 ## 9. 开发与验证
@@ -243,8 +269,9 @@ Hermes 内另有 `/workbuddy status|start|stop|sync|logs` 斜杠命令。
 cd "D:\Program Files\workbuddy-connect"
 python -m compileall -q workbuddy __init__.py
 python -m unittest discover -s tests -t . -v          # Python 单测（标准库 unittest）
-node --test bridge/test/system-policy.test.mjs bridge/test/kernel.test.mjs
+node --test bridge/test/*.test.mjs                    # 桥接单测（system-policy / kernel / cors）
 python -m workbuddy.cli_main status
+python -m workbuddy.cli_main doctor --all             # 端到端自检（改了配置先跑这个）
 python -m workbuddy.cli_main kernel                    # 内核来源与哈希
 hermes plugins doctor .            # 仓库
 hermes plugins doctor workbuddy    # 已安装副本
