@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "WorkBuddy Connect",
+    "description": "Brings WorkBuddy desktop app models into DeepSeek Harness through a local OpenAI-compatible bridge, with remaining credits and model multipliers under the composer."
+  }
+}

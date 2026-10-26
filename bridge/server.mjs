@@ -41,6 +41,8 @@ import {
 import { applyChatBody, applyMessages, resolveSystemPolicy } from "./lib/system-policy.mjs";
 import { sanitizeSystemText } from "./lib/system-text.mjs";
 import { corsHeadersFor } from "./lib/cors.mjs";
+import { assembleCompletion } from "./lib/assemble.mjs";
+import { hasImageParts } from "./lib/content.mjs";
 import { loadDshEnv } from "./lib/dsh-env.mjs";
 
 // 与 DSH 插件同源的 WORKBUDDY* 变量（Electron 二进制路径等）先加载，
@@ -333,71 +335,6 @@ function readBody(req, limit = 64 * 1024 * 1024) {
   });
 }
 
-/** Assemble an SSE stream into one non-streaming chat completion document. */
-async function assembleCompletion(webBody, fallbackModel) {
-  const reader = Readable.fromWeb(webBody);
-  let buffer = "";
-  let id = null;
-  let created = null;
-  let model = fallbackModel;
-  let content = "";
-  let finishReason = null;
-  let usage = null;
-  const toolCalls = new Map();
-  for await (const chunk of reader) {
-    buffer += chunk.toString("utf8");
-    let newline;
-    while ((newline = buffer.indexOf("\n")) !== -1) {
-      const line = buffer.slice(0, newline).trim();
-      buffer = buffer.slice(newline + 1);
-      if (!line.startsWith("data:")) continue;
-      const payload = line.slice(5).trim();
-      if (payload === "" || payload === "[DONE]") continue;
-      let event;
-      try { event = JSON.parse(payload); } catch { continue; }
-      if (typeof event.id === "string") id = event.id;
-      if (typeof event.created === "number") created = event.created;
-      if (typeof event.model === "string") model = event.model;
-      if (event.usage && typeof event.usage === "object") usage = event.usage;
-      const choice = Array.isArray(event.choices) ? event.choices[0] : undefined;
-      if (!choice) continue;
-      const delta = choice.delta ?? {};
-      if (typeof delta.content === "string") content += delta.content;
-      if (Array.isArray(delta.tool_calls)) {
-        for (const call of delta.tool_calls) {
-          const index = typeof call.index === "number" ? call.index : toolCalls.size;
-          const existing = toolCalls.get(index) ?? { id: "", type: "function", function: { name: "", arguments: "" } };
-          if (typeof call.id === "string" && call.id !== "") existing.id = call.id;
-          if (typeof call.type === "string" && call.type !== "") existing.type = call.type;
-          if (call.function && typeof call.function === "object") {
-            if (typeof call.function.name === "string" && call.function.name !== "") existing.function.name = call.function.name;
-            if (typeof call.function.arguments === "string") existing.function.arguments += call.function.arguments;
-          }
-          toolCalls.set(index, existing);
-        }
-      }
-      if (typeof choice.finish_reason === "string" && choice.finish_reason !== "") finishReason = choice.finish_reason;
-    }
-  }
-  const calls = [...toolCalls.entries()].sort((a, b) => a[0] - b[0]).map(([, call]) => call);
-  return {
-    id: id ?? `chatcmpl-${randomBytes(8).toString("hex")}`,
-    object: "chat.completion",
-    created: created ?? Math.floor(Date.now() / 1000),
-    model,
-    choices: [{
-      index: 0,
-      message: {
-        role: "assistant",
-        content: content === "" ? null : content,
-        ...(calls.length > 0 ? { tool_calls: calls } : {}),
-      },
-      finish_reason: finishReason ?? (calls.length > 0 ? "tool_calls" : "stop"),
-    }],
-    ...(usage === null ? {} : { usage }),
-  };
-}
-
 // ─────────────────────────── 路由 ───────────────────────────
 
 async function handle(req, res) {
@@ -568,11 +505,16 @@ async function chatCompletions(req, res) {
   // 之前默认 true 会把 SSE 原文塞给期待 JSON 的客户端，表现为 “invalid response (type=str)”）
   let streamRequested = false;
   let requestModel = "workbuddy";
+  let parsedBody = null;
   try {
-    const parsed = JSON.parse(raw);
-    streamRequested = parsed?.stream === true;
-    if (typeof parsed?.model === "string") requestModel = parsed.model;
+    parsedBody = JSON.parse(raw);
+    streamRequested = parsedBody?.stream === true;
+    if (typeof parsedBody?.model === "string") requestModel = parsedBody.model;
   } catch { /* upstream will report */ }
+  if (hasImageParts(parsedBody?.messages)) {
+    // 不拦：上游是否支持图片取决于具体模型；但要留痕，免得用户以为图片一定送到了
+    log("image input detected: forwarded unchanged (model support varies)");
+  }
 
   const prepared = applyChatBody(prepareChatBody(raw), chatPolicy);
   const controller = new AbortController();
@@ -940,6 +882,11 @@ async function anthropicMessages(req, res) {
   }
   const requestedModel = typeof body.model === "string" && body.model !== "" ? body.model : "workbuddy";
   const model = resolveAnthropicModel(requestedModel);
+  if (hasImageParts(body?.messages)) {
+    // Anthropic 的 image 块在上游 chat API 没有对应能力：明确告诉调用方"被丢弃了"
+    res.setHeader("x-workbuddy-images", "dropped");
+    log("anthropic image input: replaced with a text placeholder (upstream chat API has no image input)");
+  }
   const openaiBody = {
     model,
     messages: applyMessages(toOpenAIMessages(body), anthropicPolicy),

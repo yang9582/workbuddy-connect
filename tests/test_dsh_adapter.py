@@ -162,9 +162,11 @@ class DshBundleTests(unittest.TestCase):
         if yaml is None:
             self.skipTest("PyYAML 不可用")
         data = yaml.safe_load((self.bundle / "cordis.patch.yml").read_text(encoding="utf-8"))
-        # 临时 DSH_HOME 里没有官方插件，因此不写 llm-workbuddy 关闭行
-        self.assertEqual([row["id"] for row in data], ["llm-pi-ai"])
+        # 第一条是 bundle 自己的 Host 半插入行；临时 DSH_HOME 里没有官方插件，因此没有 llm-workbuddy 关闭行
+        self.assertEqual(data[0]["insert"][0]["id"], "workbuddy-connect")
+        self.assertEqual([row["id"] for row in data if "id" in row], ["llm-pi-ai"])
         self.assertIn("已生成 bundle", lines[0])
+        self.assertEqual(manifest["dsh"]["client"]["platform"], "web")
 
     def test_no_providers_is_an_error_not_a_write(self) -> None:
         with mock.patch.object(self.adapter, "_collect", return_value=([], {}, ["桥接未启动"])):
@@ -178,6 +180,44 @@ class DshBundleTests(unittest.TestCase):
             lines = self.adapter.install(manager=None)
         write.assert_called_once()
         self.assertIn("refreshed", lines)
+
+
+class DshUninstallTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        patcher = mock.patch.dict(os.environ, {"DSH_HOME": str(Path(self.tmp.name) / "dsh")})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.adapter = DshAdapter()
+        self.profile = Path(self.tmp.name) / "dsh" / "profiles" / "web"
+        self.profile.mkdir(parents=True)
+
+    def test_comment_only_result_still_parses_as_array(self) -> None:
+        """只剩模板注释时必须补 `[]`，否则 Loader 报 not a top-level array。"""
+        patch = self.profile / "cordis.patch.yml"
+        header = "# template comment\n"
+        patch.write_text(header + self.adapter._render_block([], False), encoding="utf-8")
+
+        self.adapter.uninstall(manager=None)
+
+        text = patch.read_text(encoding="utf-8")
+        self.assertIn("[]", text)
+        if yaml is None:
+            self.skipTest("PyYAML 不可用")
+        self.assertEqual(yaml.safe_load(text), [])
+
+    def test_existing_entries_are_preserved(self) -> None:
+        patch = self.profile / "cordis.patch.yml"
+        patch.write_text(
+            "# comment\n- id: other\n  disabled: true\n" + self.adapter._render_block([], False),
+            encoding="utf-8",
+        )
+        self.adapter.uninstall(manager=None)
+        text = patch.read_text(encoding="utf-8")
+        if yaml is not None:
+            self.assertEqual(yaml.safe_load(text), [{"id": "other", "disabled": True}])
+        self.assertNotIn("wbconnect", text)
 
 
 if __name__ == "__main__":

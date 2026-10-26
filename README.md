@@ -47,7 +47,7 @@ workbuddy-connect/
 │   ├── vendor/host-bundle.js # dsh-workbuddy-connect 0.7.9 内核（MIT）
 │   └── node_modules/@deepseek-ai/*   # 两个最小替身包
 ├── desktop/plugin.js         # Hermes 桌面 UI（积分徽章 / 倍率 / pill / 设置页）
-├── dsh/workbuddy-connect/    # DSH bundle：只有 package.json + 声明式 cordis.patch.yml
+├── dsh/workbuddy-connect/    # DSH bundle：声明式 patch + Host 半（/workbuddy/status）+ Client 半（积分/倍率）
 ├── vendor/dsh-workbuddy-connect/  # 0.7.9 原版（内核来源 + 旧补丁恢复用）
 ├── tests/                    # Python unittest（service / sync / dsh / kernel）
 └── scripts/install.py / uninstall.py / patch_dsh_plugin.py（已弃用，转为恢复工具）
@@ -79,6 +79,12 @@ harness (Hermes / Claude Code / Codex / OpenClaw / DSH / …)
   - `pass`：原样转发。
   Hermes / Codex / OpenClaw / DSH 与 Claude Code 现在共用同一套策略。
 - **Claude Code 的模型名**会映射到真实 WorkBuddy 模型（`claude-* → deepseek-v4.1-flash`）。
+- **推理内容**：非流式响应会把上游的 `reasoning_content` 合并进 `message.reasoning_content`
+  （部分模型会先耗尽 token 预算推理，正文为空；丢掉推理内容时客户端只能看到空回复）。
+  流式响应原样透传。
+- **图片输入**：OpenAI 路径原样转发（是否支持取决于模型），桥接日志留一行提示；
+  Anthropic 路径上游没有对应能力，图片块会被替换成文本占位，并在响应头
+  `x-workbuddy-images: dropped` 标注。
 
 ## 3. 快速开始
 
@@ -139,14 +145,21 @@ hermes workbuddy doctor
 两种接入形态，**装过 bundle 后以 bundle 为准**。
 
 **A. bundle（推荐，会出现在 DSH 的「插件」页）**
-- 包在 `dsh/workbuddy-connect/`：只有 `package.json` + 声明式 `cordis.patch.yml`，
-  **没有可执行代码**，因此不存在"插件代码与 DSH 版本耦合"的问题。
+- 包在 `dsh/workbuddy-connect/`：`package.json` + 声明式 `cordis.patch.yml`
+  + 一对很小的 Host/Client 半（`index.js` / `client.js`）。
 - 安装：在 DSH 的「插件」页安装本地包（指向该目录），或用 DSH 的
   `plugin_manager` `install_bundle`。装好后 DSH 记一条 `workbuddy-connect@2.1.0`
   （`source: link:…`），可启用/停用/卸载。
-- 它做两件事：给 `llm-pi-ai` 加两个 provider；把官方插件 `llm-workbuddy` 关掉（装了才写）。
+- 它做三件事：
+  1. 给 `llm-pi-ai` 加两个 provider；
+  2. 把官方插件 `llm-workbuddy` 关掉（装了才写）；
+  3. **输入框下方显示剩余积分与模型倍率**（Host 半提供同源 `GET /workbuddy/status`，
+     Client 半注册到 `conversation.composer.dock`；点数字展开套餐余量与倍率，可手动刷新）。
 - 模型列表变化后重新生成：`wbconnect dsh bundle` → 重启 DSH。
-- 卸载 bundle 就等于移除这两个 provider（bundle 是唯一来源）。
+- 卸载 bundle 就等于移除 provider 和那张卡片（bundle 是唯一来源）。
+
+> Host/Client 半是 JS 模块。**替换已安装包的代码后需要重启 DSH** 才会加载新的模块代际；
+> 只改 `cordis.patch.yml` 的模型列表同样建议重启。
 
 **B. profile patch（没装 bundle 时的兜底）**
 - `wbconnect install --harness dsh` 往各 profile 的 `cordis.patch.yml` 追加同样的受管块，
@@ -261,6 +274,7 @@ node 路径与 Hermes 桌面插件。
 | DSH 模型选择器里没有 WorkBuddy 分组 | 先重启 DSH；`wbconnect dsh status` 看 `mode`（`bundle` / `profile-patch`）；`~/.dsh/.env` 里要有 `WORKBUDDY_BRIDGE_TOKEN`；桥接需在跑（`wbconnect start`） |
 | DSH 插件页看不到 workbuddy-connect | 它默认没装；`wbconnect dsh bundle` 生成包，再到 DSH 插件页安装本地包（装好是 `link:` 到仓库目录） |
 | 不确定哪一环坏了 | `wbconnect doctor --all`：逐项给出桥接/探测/provider/部署/harness 状态与修复命令 |
+| DSH 输入框下方没有积分卡片 | 卡片由 bundle 的 Client 半提供：确认插件页里 `workbuddy-connect` 已启用，然后**重启 DSH**；浏览器控制台/`curl http://127.0.0.1:<DSH端口>/workbuddy/status` 可先确认 Host 半是否就绪 |
 | 401 | 目标 profile 的 `.env` 缺令牌：`hermes workbuddy sync --profiles <名字>`；DSH 则是 `~/.dsh/.env` 缺令牌，重跑 `install --harness dsh` |
 
 ## 9. 开发与验证
@@ -269,7 +283,8 @@ node 路径与 Hermes 桌面插件。
 cd "D:\Program Files\workbuddy-connect"
 python -m compileall -q workbuddy __init__.py
 python -m unittest discover -s tests -t . -v          # Python 单测（标准库 unittest）
-node --test bridge/test/*.test.mjs                    # 桥接单测（system-policy / kernel / cors）
+node --test bridge/test/*.test.mjs                    # 桥接单测（system-policy / kernel / cors / assemble）
+node --test dsh/workbuddy-connect/test/host.test.mjs  # DSH Host 半（积分/倍率裁剪）
 python -m workbuddy.cli_main status
 python -m workbuddy.cli_main doctor --all             # 端到端自检（改了配置先跑这个）
 python -m workbuddy.cli_main kernel                    # 内核来源与哈希

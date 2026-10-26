@@ -1,4 +1,8 @@
 # >>> workbuddy-connect (managed; wbconnect dsh) >>>
+# 本 bundle 的 Host 半（给 Web UI 提供同源状态接口）
+- insert:
+    - id: workbuddy-connect
+      name: workbuddy-connect
 # 官方插件与本地桥接会暴露同一批模型，关掉前者避免重复分组
 - id: llm-workbuddy
   disabled: true

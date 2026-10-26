@@ -194,8 +194,17 @@ class DshAdapter(HarnessAdapter):
         lines.extend(self._render_models(models))
         return lines
 
-    def _render_block(self, providers: List[List[str]], disable_official: bool) -> str:
+    def _render_block(self, providers: List[List[str]], disable_official: bool,
+                      include_host: bool = False) -> str:
         lines = [BEGIN]
+        if include_host:
+            # bundle 自己的 Host 半：提供 /workbuddy/status 给 Web UI（积分/倍率卡片）
+            lines.extend([
+                "# 本 bundle 的 Host 半（给 Web UI 提供同源状态接口）",
+                "- insert:",
+                f"    - id: {BUNDLE_PACKAGE}",
+                f"      name: {BUNDLE_PACKAGE}",
+            ])
         if disable_official:
             lines.extend([
                 "# 官方插件与本地桥接会暴露同一批模型，关掉前者避免重复分组",
@@ -300,9 +309,26 @@ class DshAdapter(HarnessAdapter):
             "type": "module",
             "description": (
                 "WorkBuddy 桌面 App 的模型接入 DeepSeek Harness：把本机 workbuddy-connect 桥接"
-                "注册成 OpenAI 兼容 provider。纯声明式 patch，无运行时代码。"
+                "注册成 OpenAI 兼容 provider，并在输入框下方显示剩余积分与模型倍率。"
             ),
-            "dsh": {"bundle": {"patch": f"./{PATCH_FILENAME}"}},
+            "exports": {
+                ".": "./index.js",
+                "./client": "./client.js",
+                "./locale/*.json": "./locale/*.json",
+                "./icon": "./icon.svg",
+            },
+            "files": [
+                "index.js", "client.js", PATCH_FILENAME, "locale/*.json", "icon.svg",
+            ],
+            "dsh": {
+                "bundle": {"patch": f"./{PATCH_FILENAME}"},
+                "client": {
+                    "platform": "web",
+                    "immediately": True,
+                    # 声明 composer dock 插槽的宿主包
+                    "inject": ["@deepseek-ai/dsh-client-ui-conversation"],
+                },
+            },
         }
 
     def write_bundle(self, manager) -> List[str]:
@@ -320,7 +346,7 @@ class DshAdapter(HarnessAdapter):
             (profile / "node_modules" / PLUGIN_PACKAGE).is_dir() for profile in self.profiles()
         )
         (target / PATCH_FILENAME).write_text(
-            self._render_block(providers, disable_official), encoding="utf-8",
+            self._render_block(providers, disable_official, include_host=True), encoding="utf-8",
         )
         lines = [f"已生成 bundle：{target}"]
         if warnings:
@@ -386,8 +412,16 @@ class DshAdapter(HarnessAdapter):
             if BEGIN not in text:
                 continue
             stripped = self._strip_block(text).rstrip()
-            # 还原模板的 [] 占位符，避免留下无法解析的空文档
-            self.write_text(patch, (stripped + "\n") if stripped else "[]\n")
+            # 只剩注释时也必须补一个 `[]`：YAML 里"只有注释"是 null 文档，
+            # Loader 会报 "must be a top-level YAML array"，profile 直接起不来。
+            has_entries = any(
+                line.strip() and not line.lstrip().startswith("#")
+                for line in stripped.splitlines()
+            )
+            if has_entries:
+                self.write_text(patch, stripped + "\n")
+            else:
+                self.write_text(patch, (stripped + "\n" if stripped else "") + "[]\n")
             lines.append(f"[{profile.name}] 已移除受管配置")
         if not lines:
             lines.append("没有找到受管配置")

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "WorkBuddy Connect",
+    "description": "把 WorkBuddy 桌面 App 的模型接入 DeepSeek Harness：本地桥接提供 OpenAI 兼容端点，输入框下方显示剩余积分与模型倍率。"
+  }
+}
