@@ -60,6 +60,10 @@
             maxTokens: 128000
             input:
               - text
+            reasoningEfforts:
+              low: 'low'
+              high: 'high'
+              max: 'max'
             compat:
               supportsStore: false
               supportsDeveloperRole: false
@@ -242,6 +246,10 @@
             maxTokens: 128000
             input:
               - text
+            reasoningEfforts:
+              low: 'low'
+              high: 'high'
+              max: 'max'
             compat:
               supportsStore: false
               supportsDeveloperRole: false
@@ -339,6 +347,10 @@
             maxTokens: 128000
             input:
               - text
+            reasoningEfforts:
+              low: 'low'
+              high: 'high'
+              max: 'max'
             compat:
               supportsStore: false
               supportsDeveloperRole: false
@@ -352,6 +364,10 @@
             maxTokens: 128000
             input:
               - text
+            reasoningEfforts:
+              low: 'low'
+              high: 'high'
+              max: 'max'
             compat:
               supportsStore: false
               supportsDeveloperRole: false

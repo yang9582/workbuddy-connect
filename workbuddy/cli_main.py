@@ -130,6 +130,11 @@ def main(argv: List[str] | None = None) -> int:
     models = sub.add_parser("models", help="列出模型")
     models.add_argument("--instance", default="", help="workbuddy | workbuddy-ai")
 
+    probe = sub.add_parser("probe", help="能力探测")
+    probe.add_argument("--effort", action="store_true", help="探测哪些模型真正支持 reasoning_effort")
+    probe.add_argument("--instance", default="", help="workbuddy | workbuddy-ai")
+    probe.add_argument("--reprobe", action="store_true", help="忽略缓存重新探测")
+
     endpoint = sub.add_parser("endpoint", help="打印 OpenAI 兼容端点（给没有插件体系的 harness 用）")
     endpoint.add_argument("--instance", default="workbuddy-ai")
     endpoint.add_argument("--show-token", action="store_true")
@@ -204,6 +209,27 @@ def main(argv: List[str] | None = None) -> int:
             print(json.dumps(report, ensure_ascii=False, indent=2) if args.json else doctor.render(report))
             return 0 if report["ok"] else 1
         print(hermes_cli._doctor(manager))  # noqa: SLF001
+        return 0
+    if cmd == "probe":
+        if not args.effort:
+            print("用法: wbconnect probe --effort [--instance KEY] [--reprobe]")
+            return 1
+        for inst in manager.instances():
+            if args.instance and inst.key != args.instance:
+                continue
+            try:
+                manager.ensure(inst)
+                models = manager.models(inst)
+                verdicts = manager.probe_efforts(inst, models, force=args.reprobe)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[{inst.key}] 探测失败: {exc}")
+                continue
+            supported = {k: v for k, v in verdicts.items() if v}
+            print(f"[{inst.key}] {len(supported)}/{len(models)} 个模型支持显式 reasoning_effort")
+            for model_id, efforts in sorted(supported.items()):
+                print(f"  {model_id}: {', '.join(efforts)}")
+            if len(supported) < len(models):
+                print(f"  其余 {len(models) - len(supported)} 个模型不校验该参数，不声明档位（避免假开关）")
         return 0
     if cmd == "models":
         return _cmd_models(manager, args)

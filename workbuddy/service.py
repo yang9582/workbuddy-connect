@@ -59,6 +59,10 @@ START_TIMEOUT_S = 45.0
 PROBE_WORKERS = 2
 PROBE_RETRY_DELAY_S = 1.5
 LOG_ROTATE_BYTES = 5 * 1024 * 1024
+# 推理档位探测：非法哨兵值 + 规范档位（只声明被上游真正接受的）
+EFFORT_SENTINEL = "__workbuddy_invalid__"
+EFFORT_CANDIDATES = ("low", "high", "max")
+EFFORT_CACHE_TTL_S = 7 * 86400
 
 
 @dataclass(frozen=True)
@@ -408,6 +412,110 @@ class BridgeManager:
                 results[model_id] = verdict
         try:
             self.probe_cache_path(inst).write_text(
+                json.dumps({"fingerprint": fingerprint, "ts": time.time(), "results": results},
+                           ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+        return results
+
+    # ─────────────────────────── 推理档位探测 ───────────────────────────
+    # 上游对 `reasoning_effort` 的处理分两类：
+    #   1) 完全不校验（非法值也 200）→ 声明档位只会得到"选了没用"的假开关，一律不声明；
+    #   2) 会校验（非法值 400）→ 逐个测试规范档位，只保留被接受的。
+    # 这与参考插件"先确认上游会校验该参数"的策略一致。
+
+    def effort_cache_path(self, inst: Instance) -> Path:
+        return self.state_dir() / f"effort-probe-{inst.key}.json"
+
+    def _probe_chat(self, inst: Instance, model_id: str, effort: str) -> tuple[bool, int, str]:
+        """发一次最小请求，返回 (是否被接受, HTTP 状态码, 响应正文)。"""
+        body = json.dumps({
+            "model": model_id,
+            "messages": [{"role": "user", "content": "ok"}],
+            "stream": False,
+            "max_tokens": 1,
+            "reasoning_effort": effort,
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.port(inst)}/v1/chat/completions",
+            data=body,
+            headers={"Authorization": f"Bearer {self.token(inst)}", "Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                resp.read()
+                return True, 200, ""
+        except urllib.error.HTTPError as exc:
+            raw = ""
+            try:
+                raw = exc.read().decode("utf-8", "replace")
+            except Exception:
+                pass
+            return False, exc.code, raw
+        except Exception as exc:  # 网络/超时：当作未知，不声明
+            return False, 0, str(exc)
+
+    @staticmethod
+    def classify_effort_response(accepted: bool, status: int) -> str:
+        """把一次探测结果归类：accepted（接受档位）/ unsupported（不校验参数）/ rejected。"""
+        if accepted:
+            return "accepted"
+        if status in (400, 422):
+            return "rejected"
+        return "unknown"
+
+    def read_effort_cache(self, inst: Instance) -> Dict[str, List[str]]:
+        """只读缓存（bundle 生成用）；没有就返回空。"""
+        try:
+            data = json.loads(self.effort_cache_path(inst).read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        results = data.get("results")
+        if not isinstance(results, dict):
+            return {}
+        return {str(k): [str(v) for v in values] for k, values in results.items() if isinstance(values, list)}
+
+    def probe_efforts(self, inst: Instance, models: List[Dict[str, Any]], *, force: bool = False) -> Dict[str, List[str]]:
+        """探测每个模型是否真正支持 `reasoning_effort`，返回 ``{model_id: [可用档位]}``。
+
+        空列表 = 上游不校验该参数（或所有档位都被拒绝），调用方不应声明 reasoningEfforts。
+        结果按模型目录指纹缓存 7 天。
+        """
+        fingerprint = hashlib.sha1(
+            (EFFORT_SENTINEL + "|" + ",".join(sorted(row["id"] for row in models))).encode("utf-8")
+        ).hexdigest()
+        if not force:
+            try:
+                cached = json.loads(self.effort_cache_path(inst).read_text(encoding="utf-8"))
+                if cached.get("fingerprint") == fingerprint and time.time() - float(cached.get("ts", 0)) < EFFORT_CACHE_TTL_S:
+                    results = cached.get("results")
+                    if isinstance(results, dict):
+                        return {str(k): [str(v) for v in values] for k, values in results.items() if isinstance(values, list)}
+            except Exception:
+                pass
+
+        def probe(model_id: str) -> tuple[str, List[str]]:
+            accepted, status, _raw = self._probe_chat(inst, model_id, EFFORT_SENTINEL)
+            verdict = self.classify_effort_response(accepted, status)
+            if verdict != "rejected":
+                # 不校验（accepted）或未知（网络错误）：都不声明，避免假档位
+                return model_id, []
+            supported: List[str] = []
+            for effort in EFFORT_CANDIDATES:
+                ok, _status, _body = self._probe_chat(inst, model_id, effort)
+                if ok:
+                    supported.append(effort)
+            return model_id, supported
+
+        results: Dict[str, List[str]] = {}
+        with ThreadPoolExecutor(max_workers=PROBE_WORKERS) as pool:
+            for model_id, efforts in pool.map(probe, [row["id"] for row in models]):
+                results[model_id] = efforts
+        try:
+            self.effort_cache_path(inst).write_text(
                 json.dumps({"fingerprint": fingerprint, "ts": time.time(), "results": results},
                            ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8",

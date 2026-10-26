@@ -150,16 +150,22 @@ hermes workbuddy doctor
 - 安装：在 DSH 的「插件」页安装本地包（指向该目录），或用 DSH 的
   `plugin_manager` `install_bundle`。装好后 DSH 记一条 `workbuddy-connect@2.1.0`
   （`source: link:…`），可启用/停用/卸载。
-- 它做三件事：
+- 它做四件事：
   1. 给 `llm-pi-ai` 加两个 provider；
   2. 把官方插件 `llm-workbuddy` 关掉（装了才写）；
   3. **输入框下方显示剩余积分与模型倍率**（Host 半提供同源 `GET /workbuddy/status`，
-     Client 半注册到 `conversation.composer.dock`；点数字展开套餐余量与倍率，可手动刷新）。
+     Client 半注册到 `conversation.composer.dock`；点数字展开套餐余量与倍率，可手动刷新）；
+  4. **设置 → 插件 → WorkBuddy 页**：账号、登录态、令牌有效期、积分与更新时间、
+     套餐余量、全量模型表（上下文 / 倍率 / 促销）。
+- 推理档位只声明**被上游校验并接受**的：`wbconnect probe --effort` 先用非法哨兵值试探
+  （上游若返回 400 说明它真的校验该参数），再逐个测试 `low/high/max`，结果缓存 7 天；
+  `wbconnect dsh bundle` 只为这些模型写 `reasoningEfforts`，其余保持不声明——
+  宁可没有开关，也不给"选了没用"的假档位。实测国内版 2/19、国际版 2/26 个模型支持。
 - 模型列表变化后重新生成：`wbconnect dsh bundle` → 重启 DSH。
-- 卸载 bundle 就等于移除 provider 和那张卡片（bundle 是唯一来源）。
+- 卸载 bundle 就等于移除 provider、卡片与设置页（bundle 是唯一来源）。
 
-> Host/Client 半是 JS 模块。**替换已安装包的代码后需要重启 DSH** 才会加载新的模块代际；
-> 只改 `cordis.patch.yml` 的模型列表同样建议重启。
+> Host/Client 半是 JS 模块。替换已安装包的代码后，DSH 通常会用 HMR 重挂一次就生效
+> （也可以 `plugin_manager set_plugin` 先 disable 再 enable）；若行为仍是旧版，重启 DSH。
 
 **B. profile patch（没装 bundle 时的兜底）**
 - `wbconnect install --harness dsh` 往各 profile 的 `cordis.patch.yml` 追加同样的受管块，
@@ -192,6 +198,7 @@ hermes workbuddy doctor
 | `status` | 桥接状态 + 各 harness 配置状态 |
 | `start` / `stop` / `restart` | 启停桥接实例 |
 | `models [--instance]` | 列出模型 |
+| `probe --effort [--reprobe]` | 探测哪些模型真正校验并接受 `reasoning_effort`（结果给 DSH bundle 用） |
 | `endpoint [--show-token]` | 打印 OpenAI 兼容端点（令牌默认打码） |
 | `sync [--profiles all] [--reprobe] [--no-probe]` | 刷新 Hermes provider |
 | `install --harness all\|hermes,claude,codex,openclaw,dsh,generic` | 安装/配置 |
@@ -274,7 +281,8 @@ node 路径与 Hermes 桌面插件。
 | DSH 模型选择器里没有 WorkBuddy 分组 | 先重启 DSH；`wbconnect dsh status` 看 `mode`（`bundle` / `profile-patch`）；`~/.dsh/.env` 里要有 `WORKBUDDY_BRIDGE_TOKEN`；桥接需在跑（`wbconnect start`） |
 | DSH 插件页看不到 workbuddy-connect | 它默认没装；`wbconnect dsh bundle` 生成包，再到 DSH 插件页安装本地包（装好是 `link:` 到仓库目录） |
 | 不确定哪一环坏了 | `wbconnect doctor --all`：逐项给出桥接/探测/provider/部署/harness 状态与修复命令 |
-| DSH 输入框下方没有积分卡片 | 卡片由 bundle 的 Client 半提供：确认插件页里 `workbuddy-connect` 已启用，然后**重启 DSH**；浏览器控制台/`curl http://127.0.0.1:<DSH端口>/workbuddy/status` 可先确认 Host 半是否就绪 |
+| DSH 输入框下方没有积分卡片 | 卡片由 bundle 的 Client 半提供：确认插件页里 `workbuddy-connect` 已启用；用 `curl http://127.0.0.1:<DSH端口>/workbuddy/status` 确认 Host 半就绪；必要时 disable→enable 该插件或重启 DSH |
+| DSH 模型选择器里没有推理档位 | 只有被探测确认支持 `reasoning_effort` 的模型才会出现档位：先 `wbconnect probe --effort`，再 `wbconnect dsh bundle`，最后重启 DSH |
 | 401 | 目标 profile 的 `.env` 缺令牌：`hermes workbuddy sync --profiles <名字>`；DSH 则是 `~/.dsh/.env` 缺令牌，重跑 `install --harness dsh` |
 
 ## 9. 开发与验证

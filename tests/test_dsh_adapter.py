@@ -220,5 +220,54 @@ class DshUninstallTests(unittest.TestCase):
         self.assertNotIn("wbconnect", text)
 
 
+class DshEffortRenderingTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        patcher = mock.patch.dict(os.environ, {"DSH_HOME": str(Path(self.tmp.name) / "dsh")})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.adapter = DshAdapter()
+
+    def _render(self, efforts):
+        provider = self.adapter._render_provider(
+            "workbuddy", "http://127.0.0.1:39621/v1", "TOKEN",
+            [{"id": "deepseek-v4.1-flash", "context_length": 1000000}], efforts,
+        )
+        return "\n".join(provider)
+
+    def test_declares_only_supported_efforts(self) -> None:
+        text = self._render({"deepseek-v4.1-flash": ["low", "high", "max"]})
+        self.assertIn("reasoningEfforts:", text)
+        self.assertIn("low: 'low'", text)
+        self.assertIn("max: 'max'", text)
+
+    def test_omits_block_without_probe_data(self) -> None:
+        self.assertNotIn("reasoningEfforts", self._render({}))
+        self.assertNotIn("reasoningEfforts", self._render({"deepseek-v4.1-flash": []}))
+
+    def test_filters_unknown_effort_names(self) -> None:
+        text = self._render({"deepseek-v4.1-flash": ["low", "banana", "high"]})
+        self.assertIn("low: 'low'", text)
+        self.assertNotIn("banana", text)
+
+    def test_read_effort_cache_defaults_to_empty(self) -> None:
+        from workbuddy import service
+
+        manager = service.BridgeManager(None)
+        manager.data_dir = lambda: Path(self.tmp.name)  # type: ignore[method-assign]
+        self.assertEqual(manager.read_effort_cache(service.INSTANCES[0]), {})
+
+    def test_effort_response_classification(self) -> None:
+        from workbuddy import service
+
+        classify = service.BridgeManager.classify_effort_response
+        self.assertEqual(classify(True, 200), "accepted")
+        self.assertEqual(classify(False, 400), "rejected")
+        self.assertEqual(classify(False, 422), "rejected")
+        self.assertEqual(classify(False, 500), "unknown")
+        self.assertEqual(classify(False, 0), "unknown")
+
+
 if __name__ == "__main__":
     unittest.main()

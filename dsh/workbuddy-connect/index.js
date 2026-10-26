@@ -37,16 +37,25 @@ export function readConfig(dir, file) {
   }
 }
 
-/** 把桥接 `/v1/status` 裁成 UI 需要的形状（绝不带令牌或账号标识）。 */
+/** 把桥接 `/v1/status` 裁成 UI 需要的形状（绝不带令牌）。 */
 export function summarize(status, key, label) {
   const credits = status && typeof status.credits === "object" && status.credits !== null ? status.credits : null;
   const accounts = Array.isArray(credits?.accounts) ? credits.accounts : [];
   const models = Array.isArray(status?.models) ? status.models : [];
+  const account = status && typeof status.account === "object" && status.account !== null ? status.account : null;
   return {
     key,
     label,
     ok: true,
     signIn: status?.signIn?.state ?? null,
+    account: account === null ? null : {
+      uid: typeof account.uid === "string" ? account.uid : null,
+      domain: typeof account.domain === "string" ? account.domain : null,
+      expiresAt: typeof account.expiresAt === "string" ? account.expiresAt : null,
+      source: typeof account.source === "string" ? account.source : null,
+    },
+    catalogSource: typeof status?.catalogSource === "string" ? status.catalogSource : null,
+    creditsFetchedAt: typeof status?.creditsFetchedAt === "string" ? status.creditsFetchedAt : null,
     credits: credits === null ? null : {
       total: typeof credits.total === "number" ? credits.total : null,
       unlimited: credits.unlimited === true,
@@ -63,6 +72,7 @@ export function summarize(status, key, label) {
       .map((model) => ({
         id: model.id,
         name: typeof model.name === "string" && model.name !== "" ? model.name : model.id,
+        contextWindow: typeof model.contextWindow === "number" ? model.contextWindow : null,
         multiplier: typeof model.multiplier === "string" ? model.multiplier : null,
         badges: Array.isArray(model.badges) ? model.badges.map(String) : [],
         free: model.free === true,

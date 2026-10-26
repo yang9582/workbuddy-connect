@@ -57,6 +57,9 @@ MODEL_COMPAT = {
 
 DISPLAY_NAMES = {"workbuddy": "WorkBuddy", "workbuddy-ai": "WorkBuddy AI"}
 
+# pi-ai 接受的档位名（与 llm-pi-ai 的 schema 一致）
+EFFORT_KEYS = {"off", "minimal", "low", "medium", "high", "xhigh", "max"}
+
 
 def _yaml_str(value: str) -> str:
     """YAML 单引号标量（内部单引号翻倍）。"""
@@ -158,7 +161,8 @@ class DshAdapter(HarnessAdapter):
         return info
 
     # ── 配置渲染 ────────────────────────────────────────────
-    def _render_models(self, models: List[Dict[str, Any]]) -> List[str]:
+    def _render_models(self, models: List[Dict[str, Any]],
+                       efforts: Optional[Dict[str, List[str]]] = None) -> List[str]:
         lines: List[str] = ["        models:"]
         for model in models:
             model_id = str(model.get("id") or "")
@@ -176,6 +180,12 @@ class DshAdapter(HarnessAdapter):
                 lines.append(f"            maxTokens: {max_tokens}")
             lines.append("            input:")
             lines.append("              - text")
+            # 只声明被上游真正校验并接受的档位（wbconnect probe --effort 的结果）
+            supported = [e for e in (efforts or {}).get(model_id) or [] if e in EFFORT_KEYS]
+            if supported:
+                lines.append("            reasoningEfforts:")
+                for effort in supported:
+                    lines.append(f"              {effort}: {_yaml_str(effort)}")
             lines.append("            compat:")
             for key, value in MODEL_COMPAT.items():
                 rendered = "true" if value is True else ("false" if value is False else str(value))
@@ -183,7 +193,8 @@ class DshAdapter(HarnessAdapter):
         return lines
 
     def _render_provider(self, key: str, base_url: str, token_env: str,
-                         models: List[Dict[str, Any]]) -> List[str]:
+                         models: List[Dict[str, Any]],
+                         efforts: Optional[Dict[str, List[str]]] = None) -> List[str]:
         lines = [
             f"      {key}:",
             f"        displayName: {_yaml_str(DISPLAY_NAMES.get(key, key))}",
@@ -191,7 +202,7 @@ class DshAdapter(HarnessAdapter):
             "        api: openai-completions",
             f"        apiKeyEnv: {token_env}",
         ]
-        lines.extend(self._render_models(models))
+        lines.extend(self._render_models(models, efforts))
         return lines
 
     def _render_block(self, providers: List[List[str]], disable_official: bool,
@@ -284,8 +295,10 @@ class DshAdapter(HarnessAdapter):
             if not models:
                 warnings.append(f"{inst.key}: 桥接没有可用模型，跳过")
                 continue
+            # 只读已探测的推理档位；没有就（继续）不声明，避免出现"选了没用"的假开关
+            efforts = manager.read_effort_cache(inst) if hasattr(manager, "read_effort_cache") else {}
             providers.append(self._render_provider(
-                inst.key, endpoint["base_url"], inst.token_env, models,
+                inst.key, endpoint["base_url"], inst.token_env, models, efforts,
             ))
             tokens[inst.token_env] = endpoint["token"]
         return providers, tokens, warnings
