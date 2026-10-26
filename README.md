@@ -103,6 +103,10 @@ python -m workbuddy.cli_main dsh bundle
 
 装好后模型选择器里会出现 **WorkBuddy / WorkBuddy AI** 分组；选中其中的模型，输入框左侧会出现积分条。
 
+> ⚠️ **桥接不会开机自启**。重启电脑后要先跑一次 `wbconnect start`，否则模型出现在列表里但调用会失败。
+> 想省事可以把 `bin\wbconnect start` 放进「启动」文件夹，或做成计划任务（登录时运行）。
+> 排查时 `wbconnect status` 第一行就写着桥接是否在跑。
+
 不确定哪一步没通，先跑自检：
 
 ```bash
@@ -306,6 +310,8 @@ tests/                单元测试（标准库 unittest，无第三方依赖）
   文本占位并在响应头标 `x-workbuddy-images: dropped`。
 - **只支持 DSH**：其它 harness 的适配器还在开发中，接口可能变，不保证可用。
 - **只测过 Windows**：路径与进程管理在 Windows 上验证；macOS / Linux 未验证。
+- **桥接需要常驻**：没有开机自启，重启后要手动 `wbconnect start`；桥接停了模型仍会列在
+  选择器里，但调用会失败（此时积分条显示 `✕`）。
 - **DSH 里没有"模型显隐/窗口下拉"**：这两项依赖 DSH 插件把 provider 程序化注册，本项目为了
   避开版本耦合只做配置化 + 设置页展示。
 - **个人使用定位**：请自行确认符合 WorkBuddy 的服务条款与所在地区法规；不要用于商业转售、
