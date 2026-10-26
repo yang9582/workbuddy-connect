@@ -165,8 +165,10 @@ export function apply(ctx) {
   // Client 半启动时回报一次"注册结果 + 构建标记"，用于判断浏览器加载的是哪一版模块。
   let beacon = null;
   ctx.effect(() => ctx.webServer.register({
-    kind: "exact",
-    path: "/workbuddy/status",
+    // prefix：一个 handler 覆盖 /workbuddy/status、/workbuddy/beacon、/workbuddy/client-beacon。
+    // 用 exact + 单一路径时，另外两个路径根本进不来（会被 fallback 吃掉，返回 404）。
+    kind: "prefix",
+    path: "/workbuddy/",
     handler: async (req, res) => {
       try {
         const url = new URL(req.url ?? "/", "http://localhost");
@@ -178,6 +180,10 @@ export function apply(ctx) {
         }
         if (req.method === "GET" && url.pathname === "/workbuddy/beacon") {
           sendJson(res, 200, { beacon });
+          return;
+        }
+        if (url.pathname !== "/workbuddy/status") {
+          sendJson(res, 404, { error: `no such route: ${url.pathname}` });
           return;
         }
         const refresh = url.searchParams.get("refresh") === "1";
