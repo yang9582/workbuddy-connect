@@ -13,3 +13,6 @@ node_modules/.cache/
 Thumbs.db
 .idea/
 .vscode/
+
+# `wbconnect dsh bundle` 的产物：包含本账号的模型清单，不进仓库
+dsh/workbuddy-connect/cordis.patch.yml

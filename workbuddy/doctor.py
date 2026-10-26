@@ -186,6 +186,12 @@ def _harness_checks(manager: service.BridgeManager) -> List[Dict[str, Any]]:
             if bundle.get("installed"):
                 checks.append(_check("DeepSeek Harness", "ok" if mode == "bundle" else "warn",
                                      f"mode={mode} · bundle {bundle.get('package')} 已安装"))
+                if not bundle.get("patch_present", True):
+                    checks.append(_check(
+                        "DeepSeek Harness 生成物", "warn",
+                        "bundle 已装但没有 cordis.patch.yml（仓库只带模板）",
+                        "wbconnect dsh bundle，然后在插件页重装或重启 DSH",
+                    ))
             elif mode == "profile-patch":
                 checks.append(_check("DeepSeek Harness", "ok", "mode=profile-patch（未装 bundle）"))
             else:

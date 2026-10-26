@@ -156,6 +156,8 @@ class DshAdapter(HarnessAdapter):
                 "package": BUNDLE_PACKAGE,
                 "path": str(self.bundle_dir()),
                 "patch": str(self.bundle_dir() / PATCH_FILENAME),
+                # 仓库只带模板；生成物按账号生成且不进 git
+                "patch_present": (self.bundle_dir() / PATCH_FILENAME).is_file(),
             },
             "mode": "bundle" if self.bundle_installed() else ("profile-patch" if any(row["managed"] for row in rows) else "not-configured"),
             "configured": self.bundle_installed() or any(row["managed"] for row in rows),

@@ -36,6 +36,7 @@ window.__ModuleLoader__.load({
       contextPolicy: 'Context policy',
       contextPolicyMax: 'Use the largest available window',
       contextPolicyDefault: 'Use the upstream default window',
+      providerMissing: 'No WorkBuddy provider found. Run `wbconnect dsh bundle`, then reinstall the plugin or restart DSH.',
       creditsUpdated: 'Credits updated',
       packages: 'Plan balance',
       allModels: 'All models',
@@ -68,6 +69,7 @@ window.__ModuleLoader__.load({
       contextPolicy: '上下文策略',
       contextPolicyMax: '使用可选最大窗口',
       contextPolicyDefault: '使用上游默认窗口',
+      providerMissing: '检测不到 WorkBuddy provider：请先运行 `wbconnect dsh bundle`，再到 DSH 插件页重新安装或重启 DSH。',
       creditsUpdated: '积分更新',
       packages: '套餐余量',
       allModels: '全部模型',
@@ -169,6 +171,15 @@ window.__ModuleLoader__.load({
       if (!credits) return '—';
       if (credits.unlimited === true) return t('unlimited', '不限量');
       return `${number(credits.total)} ${t('credits', '积分')}`;
+    };
+
+    /** provider 没注册进 DSH 时给一条明确提示（通常是还没跑 `wbconnect dsh bundle`）。 */
+    const providerWarning = (data) => {
+      if (!data || data.providerRegistered !== false) return null;
+      return h('div', {
+        key: 'provider-missing',
+        style: { fontSize: '11px', color: 'var(--ui-warning, #b8860b)', padding: '2px 2px 0' },
+      }, t('providerMissing', '检测不到 WorkBuddy provider：请先运行 `wbconnect dsh bundle`，再到 DSH 插件页重新安装或重启 DSH。'));
     };
 
     const variantFor = (key) => {
@@ -288,6 +299,7 @@ window.__ModuleLoader__.load({
 
       return h('div', { style: { display: 'flex', flexDirection: 'column' } }, [
         h('div', { key: 'chips', style: style.row }, chips),
+        open ? providerWarning(state.data) : null,
         open
           ? h('div', { key: 'panel', style: style.panel }, [
               h('div', { key: 'bar', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } }, [
@@ -422,6 +434,7 @@ window.__ModuleLoader__.load({
           ? h('div', { key: 'err', style: { color: 'var(--ui-danger, #d9534f)', fontSize: '11px' } },
               `${t('readFailed', '读取失败')}：${state.error}`)
           : null,
+        providerWarning(state.data),
         variants.length === 0
           ? h('div', { key: 'empty', style: style.muted }, t('empty', '还没有数据（桥接未启动或未登录）'))
           : h('div', { key: 'cards', style: { display: 'flex', flexDirection: 'column', gap: '12px' } },

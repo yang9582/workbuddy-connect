@@ -8,7 +8,7 @@ Hermes Agent、Claude Code、Codex CLI、OpenClaw、DeepSeek Harness（DSH）共
 ![python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![node](https://img.shields.io/badge/node-18%2B-339933)
 ![platform](https://img.shields.io/badge/platform-Windows%20tested-lightgrey)
-![tests](https://img.shields.io/badge/tests-68%20Python%20%7C%2039%20Node-brightgreen)
+![tests](https://img.shields.io/badge/tests-69%20Python%20%7C%2041%20Node-brightgreen)
 
 > English TL;DR: A local OpenAI/Anthropic-compatible bridge that exposes WorkBuddy desktop models
 > to Hermes, Claude Code, Codex, OpenClaw and DeepSeek Harness — with a DSH plugin that shows
@@ -108,8 +108,12 @@ python -m workbuddy.cli_main dsh bundle
 
 然后在 DSH 的「插件」页安装本地包（指向 `dsh/workbuddy-connect/`）。
 
-> 仓库里的 `cordis.patch.yml` 是作者账号的一份快照；**首次安装前先跑一次 `dsh bundle`**，
-> 让模型列表、上下文窗口和推理档位按你自己的账号重新生成。
+> **必须先跑 `dsh bundle` 再安装**：仓库里只有模板 `cordis.patch.example.yml`，
+> 真正被 DSH 读取的 `cordis.patch.yml` 是按**你自己的账号**生成的（含模型清单），
+> 已被 `.gitignore` 排除，不会出现在仓库里。
+>
+> 如果你先装了插件却没生成 patch，插件自身会在卡片与设置页提示
+> "检测不到 WorkBuddy provider"——补跑一次 `dsh bundle`，再在插件页重装或重启 DSH 即可。
 
 它会带来：
 
@@ -249,9 +253,9 @@ Claude Code / Codex / OpenClaw / DSH（bundle、旧补丁残留）/ 部署版本
 
 ```bash
 python -m compileall -q workbuddy __init__.py
-python -m unittest discover -s tests -t . -v          # Python：68 项
+python -m unittest discover -s tests -t . -v          # Python：69 项
 node --test bridge/test/*.test.mjs                    # 桥接：31 项（策略/内核/CORS/SSE 拼装/模型字段）
-node --test dsh/workbuddy-connect/test/*.test.mjs     # bundle：8 项（Host 裁剪 + Client 注册）
+node --test dsh/workbuddy-connect/test/*.test.mjs     # bundle：10 项（Host 裁剪/自检 + Client 注册）
 python -m workbuddy.cli_main doctor --all
 ```
 

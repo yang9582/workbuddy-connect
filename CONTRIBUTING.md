@@ -35,7 +35,8 @@ python -m workbuddy.cli_main dsh bundle
 
 - 提交信息用中文、`type(scope): 摘要` 形式（`feat` / `fix` / `chore` / `docs`）。
 - 一个提交只做一件事；附上验证方式（测试命令或实测结果）。
-- **不要提交**个人路径、真实令牌、对话转储、`%LOCALAPPDATA%` 下的运行时文件。
+- **不要提交**个人路径、真实令牌、对话转储、`%LOCALAPPDATA%` 下的运行时文件，
+  以及 `dsh/workbuddy-connect/cordis.patch.yml`（按账号生成的产物，已被 `.gitignore` 排除）。
 
 ## PR 检查清单
 

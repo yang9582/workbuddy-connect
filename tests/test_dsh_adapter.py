@@ -181,6 +181,13 @@ class DshBundleTests(unittest.TestCase):
         write.assert_called_once()
         self.assertIn("refreshed", lines)
 
+    def test_status_reports_patch_presence(self) -> None:
+        # 仓库只带模板；生成物由 write_bundle 产出，status 要如实反映在不在
+        self.assertFalse(self.adapter.status()["bundle"]["patch_present"])
+        with mock.patch.object(self.adapter, "_collect", return_value=(self._providers(), {"T": "v"}, [])):
+            self.adapter.write_bundle(manager=None)
+        self.assertTrue(self.adapter.status()["bundle"]["patch_present"])
+
 
 class DshUninstallTests(unittest.TestCase):
     def setUp(self) -> None:

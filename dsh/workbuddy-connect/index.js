@@ -129,6 +129,24 @@ function sendJson(res, status, body) {
 
 export const inject = ["webServer"];
 
+/**
+ * 判断 DSH 里是否已经注册了本插件的 provider。
+ * 返回 true / false；拿不到 llm 服务时返回 null（UI 不做提示，避免误报）。
+ *
+ * 这覆盖了"仓库里只有模板、还没跑 `wbconnect dsh bundle`"的情况：
+ * 插件能装上、卡片能显示，但模型选择器里不会有 WorkBuddy 分组。
+ */
+export function providersRegistered(llm) {
+  try {
+    if (llm === null || llm === undefined) return null;
+    const list = typeof llm.listProviders === "function" ? llm.listProviders() : null;
+    if (!Array.isArray(list)) return null;
+    return list.some((entry) => JSON.stringify(entry ?? {}).toLowerCase().includes("workbuddy"));
+  } catch {
+    return null;
+  }
+}
+
 function readJsonBody(req, limit = 16 * 1024) {
   return new Promise((resolve) => {
     let data = "";
@@ -169,6 +187,10 @@ export function apply(ctx) {
           return;
         }
         const data = await collectStatus({ refresh });
+        // 顺带告诉 UI：provider 是否已经注册进 DSH（未生成 patch 时会是 false）
+        let llm = null;
+        try { llm = ctx.get("llm"); } catch { llm = null; }
+        data.providerRegistered = providersRegistered(llm);
         cache = { at: Date.now(), data };
         sendJson(res, 200, data);
       } catch (error) {

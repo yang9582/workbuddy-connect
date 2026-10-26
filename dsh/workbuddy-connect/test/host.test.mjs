@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { dataDir, readConfig, summarize } from "../index.js";
+import { dataDir, providersRegistered, readConfig, summarize } from "../index.js";
 
 test("dataDir honours WORKBUDDY_BRIDGE_DATA", () => {
   const previous = process.env.WORKBUDDY_BRIDGE_DATA;
@@ -69,4 +69,19 @@ test("summarize tolerates missing credits/models", () => {
   const summary = summarize({}, "workbuddy-ai", "WorkBuddy AI");
   assert.equal(summary.credits, null);
   assert.deepEqual(summary.models, []);
+});
+
+test("providersRegistered 能区分有没有注册 WorkBuddy provider", () => {
+  assert.equal(providersRegistered({ listProviders: () => [{ id: "deepseek-account" }] }), false);
+  assert.equal(providersRegistered({ listProviders: () => [{ id: "workbuddy" }] }), true);
+  assert.equal(providersRegistered({ listProviders: () => [{ name: "WorkBuddy AI" }] }), true);
+  assert.equal(providersRegistered({ listProviders: () => [{ title: "Custom: workbuddy-ai" }] }), true);
+});
+
+test("providersRegistered 拿不到信息时返回 null（不误报）", () => {
+  assert.equal(providersRegistered(null), null);
+  assert.equal(providersRegistered(undefined), null);
+  assert.equal(providersRegistered({}), null);
+  assert.equal(providersRegistered({ listProviders: () => null }), null);
+  assert.equal(providersRegistered({ listProviders: () => { throw new Error("boom"); } }), null);
 });

@@ -1,0 +1,12 @@
+# >>> workbuddy-connect (模板) >>>
+# 这是占位模板，不要直接使用，也不要手工填写。
+#
+# 运行 `wbconnect dsh bundle` 会在同目录生成 `cordis.patch.yml`：
+#   - provider 列表、上下文窗口、推理档位都按你自己账号的模型目录写入；
+#   - 生成物含你的模型清单，已被 .gitignore 排除，不会提交到仓库。
+#
+# 生成后再在 DSH 的「插件」页安装本地包（指向 dsh/workbuddy-connect/）。
+- insert:
+    - id: workbuddy-connect
+      name: workbuddy-connect
+# <<< workbuddy-connect (模板) <<<
