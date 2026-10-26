@@ -415,12 +415,16 @@ window.__ModuleLoader__.load({
     }
 
     // ─────────────────────────── 装配 ───────────────────────────
+    const BUILD = '2.1.0+label-locale';
+    let activeLocale = 'en';
+
     function registerLocale(ctx) {
       let active = 'en';
       try {
         const snapshot = ctx.locale.getLocale();
         if (snapshot && typeof snapshot.active === 'string' && snapshot.active !== '') active = snapshot.active;
       } catch { /* 拿不到就用 en */ }
+      activeLocale = active;
       const ids = new Set(['en', active]);
       for (const id of ids) {
         const dict = String(id).toLowerCase().startsWith('zh') ? ZH : EN;
@@ -435,15 +439,46 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /** 把本次 apply 的注册结果回报给 Host（/workbuddy/beacon 可查），用于区分"旧模块"与"注册失败"。 */
+    function postBeacon(report) {
+      try {
+        void fetch('/workbuddy/client-beacon', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            build: BUILD,
+            locale: activeLocale,
+            slots: report,
+            href: typeof location === 'undefined' ? '' : String(location.href),
+          }),
+        }).catch(() => {});
+      } catch { /* 诊断信息尽力而为 */ }
+    }
+
     return {
       inject: ['slots', 'locale'],
       apply(ctx) {
         registerLocale(ctx);
 
+        const report = [];
         const inject = (slot, options, component) => {
+          const entry = { slot, injected: false, registered: false, error: '' };
+          report.push(entry);
           try {
-            ctx.slots.inject(slot, () => ctx.slots.register(Object.assign({ name: slot }, options), component));
-          } catch { /* 插槽不存在或注册被拒：不影响其它部分 */ }
+            ctx.slots.inject(slot, () => {
+              try {
+                const dispose = ctx.slots.register(Object.assign({ name: slot }, options), component);
+                entry.registered = true;
+                return dispose;
+              } catch (error) {
+                entry.error = String((error && error.message) || error).slice(0, 200);
+                throw error;
+              }
+            });
+            entry.injected = true;
+          } catch (error) {
+            entry.error = String((error && error.message) || error).slice(0, 200);
+          }
         };
 
         inject('conversation.composer.dock', { id: 'workbuddy-credits', order: 12 }, Dock);
@@ -452,6 +487,8 @@ window.__ModuleLoader__.load({
 
         // 只取一次：积分查询会真的打到计费接口，不做轮询；需要时用卡片上的"刷新"。
         void refresh(false);
+        // 延迟一拍，等 inject 的延迟回调跑完再自报
+        setTimeout(() => postBeacon(report), 0);
       },
     };
   },

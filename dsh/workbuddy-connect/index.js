@@ -122,14 +122,39 @@ function sendJson(res, status, body) {
 
 export const inject = ["webServer"];
 
+function readJsonBody(req, limit = 16 * 1024) {
+  return new Promise((resolve) => {
+    let data = "";
+    req.on("data", (chunk) => {
+      if (data.length < limit) data += chunk.toString("utf8");
+    });
+    req.on("end", () => {
+      try { resolve(JSON.parse(data)); } catch { resolve(null); }
+    });
+    req.on("error", () => resolve(null));
+  });
+}
+
 export function apply(ctx) {
   let cache = { at: 0, data: null };
+  // Client 半启动时回报一次"注册结果 + 构建标记"，用于判断浏览器加载的是哪一版模块。
+  let beacon = null;
   ctx.effect(() => ctx.webServer.register({
     kind: "exact",
     path: "/workbuddy/status",
     handler: async (req, res) => {
       try {
         const url = new URL(req.url ?? "/", "http://localhost");
+        if (req.method === "POST" && url.pathname === "/workbuddy/client-beacon") {
+          const body = await readJsonBody(req);
+          beacon = { at: new Date().toISOString(), body: body === null ? null : body };
+          sendJson(res, 200, { ok: true });
+          return;
+        }
+        if (req.method === "GET" && url.pathname === "/workbuddy/beacon") {
+          sendJson(res, 200, { beacon });
+          return;
+        }
         const refresh = url.searchParams.get("refresh") === "1";
         const now = Date.now();
         if (!refresh && cache.data !== null && now - cache.at < CACHE_MS) {

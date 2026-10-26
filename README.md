@@ -296,7 +296,7 @@ node 路径与 Hermes 桌面插件。
 | DSH 插件页看不到 workbuddy-connect | 它默认没装；`wbconnect dsh bundle` 生成包，再到 DSH 插件页安装本地包（装好是 `link:` 到仓库目录） |
 | 不确定哪一环坏了 | `wbconnect doctor --all`：逐项给出桥接/探测/provider/部署/harness 状态与修复命令 |
 | DSH 输入框下方没有积分卡片 | 卡片由 bundle 的 Client 半提供：确认插件页里 `workbuddy-connect` 已启用；用 `curl http://127.0.0.1:<DSH端口>/workbuddy/status` 确认 Host 半就绪；必要时 disable→enable 该插件或重启 DSH |
-| DSH 模型菜单里模型名后没有倍率 | 该标签由 bundle 的 Client 半接管：**刷新页面**（或重启 DSH）加载新模块；只有 WorkBuddy 两个 provider 的模型会加倍率 |
+| DSH 模型菜单里模型名后没有倍率 | 该标签由 bundle 的 Client 半接管：**刷新页面**（或重启 DSH）加载新模块；自查 `curl http://127.0.0.1:<端口>/workbuddy/beacon` —— 有 `build` 与三个插槽的 `registered` 结果说明 Client 半已加载；`404` 说明 Host 半还是旧模块，需要重启 DSH |
 | DSH 模型选择器里没有推理档位 | 默认会强制写出 low/medium/high；若仍没有，检查桥接配置是不是 `effortPolicy: "declared"`、模型是否有 `reasoning` 字段；改完 `wbconnect dsh bundle` 并重启 DSH |
 | 401 | 目标 profile 的 `.env` 缺令牌：`hermes workbuddy sync --profiles <名字>`；DSH 则是 `~/.dsh/.env` 缺令牌，重跑 `install --harness dsh` |
 
