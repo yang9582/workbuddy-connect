@@ -7,6 +7,36 @@
 - Python **3.10+**（只用标准库，测试用 `unittest`）
 - Node.js **18+**（桥接与测试用 `node:test`，无第三方依赖）
 
+## 仓库地址、分支与认证
+
+- 默认分支是 **`main`**（仓库里没有任何脚本或 CI 依赖分支名，改名/改分支不影响构建）。
+- 克隆与推送两种方式都可以，按你的环境选：
+
+```bash
+# HTTPS（需要 PAT 或 gh auth login 的凭据）
+git clone https://github.com/<owner>/workbuddy-connect.git
+
+# SSH（推荐，避免代理/网络抖动时 HTTPS 被重置）
+git clone git@github.com:<owner>/workbuddy-connect.git
+```
+
+- **仓库改名或转移后**，本地要更新远端地址，否则推送会落到旧路径（短期内 GitHub 会重定向，
+  但旧用户名一旦被他人抢注，重定向就失效）：
+
+```bash
+git remote set-url origin git@github.com:<new-owner>/workbuddy-connect.git
+git remote -v          # 确认
+git fetch --prune
+```
+
+- 提交作者使用 `yang <103644627+yang9582@users.noreply.github.com>`（GitHub 的 **ID 型 noreply**）。
+  这种地址跟账号 ID 绑定，**改用户名不会让历史提交失去归属**；换设备时执行一次即可：
+
+```bash
+git config user.name "yang"
+git config user.email "103644627+yang9582@users.noreply.github.com"
+```
+
 ## 常用命令
 
 ```bash
