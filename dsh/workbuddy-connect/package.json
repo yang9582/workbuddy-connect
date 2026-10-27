@@ -1,6 +1,6 @@
 {
   "name": "workbuddy-connect",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "private": true,
   "type": "module",
   "description": "WorkBuddy 桌面 App 的模型接入 DeepSeek Harness：把本机 workbuddy-connect 桥接注册成 OpenAI 兼容 provider，并在输入框下方显示剩余积分与模型倍率。",

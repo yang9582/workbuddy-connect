@@ -270,6 +270,9 @@ class DshAdapter(HarnessAdapter):
                 lines.append(f"            maxTokens: {max_tokens}")
             lines.append("            input:")
             lines.append("              - text")
+            # 上游声明支持图片时才声明 image；否则 DSH 会误判为纯文本模型
+            if model.get("supports_images") is True:
+                lines.append("              - image")
             # 档位来源优先级：effortOverrides > 目录声明/探测结果 > 强制三档
             supported = self._model_efforts(model, efforts, policy)
             if supported:

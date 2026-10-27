@@ -274,6 +274,24 @@ class DshEffortRenderingTests(unittest.TestCase):
         text = self._render({}, row, {"force": False, "levels": ["low", "medium", "high"], "overrides": {}})
         self.assertNotIn("reasoningEfforts", text)
 
+    def test_image_input_declared_only_when_upstream_supports(self) -> None:
+        """上游声明 supportsImages 时才写 image；否则 DSH 会当成纯文本模型拒绝图片。"""
+        text = "\n".join(self.adapter._render_models([
+            {"id": "vision", "supports_images": True},
+            {"id": "text-only", "supports_images": False},
+            {"id": "unknown"},
+        ]))
+        blocks = text.split("- id: ")[1:]
+        by_id = {}
+        for block in blocks:
+            first = block.splitlines()[0].strip()
+            by_id[first.strip("'\"")] = block
+        self.assertIn("- image", by_id["vision"])
+        self.assertNotIn("- image", by_id["text-only"])
+        self.assertNotIn("- image", by_id["unknown"])
+        for block in by_id.values():
+            self.assertIn("- text", block)
+
     def test_overrides_win_and_are_filtered(self) -> None:
         row = {"id": "glm-5.3", "reasoning": {"supports": True, "supportedEfforts": ["low", "high", "max"]}}
         policy = {"force": True, "levels": ["low"], "overrides": {"glm-5.3": ["high", "banana"]}}

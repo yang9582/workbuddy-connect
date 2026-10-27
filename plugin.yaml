@@ -1,5 +1,5 @@
 name: workbuddy
-version: 2.1.1
+version: 2.2.0
 manifest_version: 2
 description: "WorkBuddy 桌面 App 模型接入的历史插件清单（Hermes 格式）。当前支持范围仅为 DeepSeek Harness（DSH），安装与使用见 README。"
 author: DSH WorkBuddy contributors

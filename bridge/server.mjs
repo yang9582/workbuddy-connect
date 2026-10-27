@@ -219,6 +219,8 @@ function displayRows(now = Date.now()) {
       supportedContextWindows: supported,
       maxInputTokens: typeof live.maxInputTokens === "number" ? live.maxInputTokens : null,
       maxTokens: typeof live.maxTokens === "number" ? live.maxTokens : null,
+      // 上游声明的图片能力；DSH 要据此把模型声明成多模态，否则会拒绝图片输入
+      supportsImages: live.supportsImages === true,
       multiplier: normalizeCredits(live.billing?.credits) ?? null,
       badges: Array.isArray(live.billing?.badges) ? live.billing.badges : [],
       free: live.billing?.free === true,
@@ -458,7 +460,9 @@ async function handle(req, res) {
           default_context_window: model.defaultContextWindow ?? undefined,
           max_input_tokens: model.maxInputTokens ?? undefined,
           max_tokens: model.maxTokens ?? undefined,
-          // 非标准扩展字段：倍率 / 促销徽章 / 推理档位声明（Hermes 忽略，插件与脚本使用）
+          // 图片输入能力（DSH 据此决定模型是否声明 image 输入）
+          supports_images: model.supportsImages === true,
+          // 非标准扩展字段：倍率 / 促销徽章 / 推理档位声明（供插件与脚本使用）
           multiplier: model.multiplier ?? undefined,
           badges: model.badges.length > 0 ? model.badges : undefined,
           free: model.free,
