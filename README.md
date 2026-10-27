@@ -14,7 +14,7 @@
 ![python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![node](https://img.shields.io/badge/node-18%2B-339933)
 ![platform](https://img.shields.io/badge/platform-Windows%20tested-lightgrey)
-![tests](https://img.shields.io/badge/tests-78%20Python%20%7C%2044%20Node-brightgreen)
+![tests](https://img.shields.io/badge/tests-78%20Python%20%7C%2046%20Node-brightgreen)
 
 > English TL;DR: A local bridge that exposes WorkBuddy desktop models to **DeepSeek Harness (DSH)**
 > as an installable plugin — with live credits in the composer, per-model rate multipliers in the
@@ -286,7 +286,7 @@ python -m workbuddy.cli_main doctor --all --json   # 给脚本用
 python -m compileall -q workbuddy __init__.py
 python -m unittest discover -s tests -t . -v          # Python：78 项
 node --test bridge/test/*.test.mjs                    # 桥接：31 项（策略/内核/CORS/SSE 拼装/模型字段）
-node --test dsh/workbuddy-connect/test/*.test.mjs     # bundle：13 项（Host 路由/裁剪/自检 + Client 注册）
+node --test dsh/workbuddy-connect/test/*.test.mjs     # bundle：15 项（Host 路由/裁剪/自检 + Client 注册）
 python -m workbuddy.cli_main doctor --all
 ```
 
