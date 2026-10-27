@@ -1,8 +1,8 @@
 name: workbuddy
-version: 2.1.0
+version: 2.1.1
 manifest_version: 2
-description: "WorkBuddy 桌面 App 的模型接入 Hermes（桥接托管 + provider 同步 + 桌面 UI）；同一仓库还提供 Claude Code / Codex / OpenClaw / DSH 适配器"
-author: Hermes Agent
+description: "WorkBuddy 桌面 App 模型接入的历史插件清单（Hermes 格式）。当前支持范围仅为 DeepSeek Harness（DSH），安装与使用见 README。"
+author: DSH WorkBuddy contributors
 license: MIT
 tags: [workbuddy, provider, bridge, openai-compatible]
 

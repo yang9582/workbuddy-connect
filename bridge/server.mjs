@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 /**
- * workbuddy-bridge —— 把 WorkBuddy 桌面 App 的模型接入 Hermes Agent。
+ * workbuddy-bridge —— 把 WorkBuddy 桌面 App 的模型接入 DeepSeek Harness（DSH）。
  *
- * 原理（全部复用 dsh-workbuddy-connect（MIT）的宿主内核，见 vendor/host-bundle.js）：
+ * 原理（复用 dsh-workbuddy-connect（MIT）的宿主内核，见 vendor/host-bundle.js）：
  *   - 凭据：读取 WorkBuddy 桌面 App 的登录态（5.6+ 为加密凭据，经 App 自带
  *     Electron 解密），access token 临近过期时自动刷新；
  *   - 上游：WorkBuddyUpstreamClient，请求 copilot.tencent.com（国内版）/
  *     workbuddy.ai（国际版）的 /v2/chat/completions；
  *   - 出口：本进程在 127.0.0.1 上暴露 OpenAI 兼容接口
  *     （GET /healthz、GET /v1/models、POST /v1/chat/completions，
- *      支持 SSE 流式与工具调用），Hermes 以“自定义 provider”接入。
+ *      支持 SSE 流式与工具调用），DSH 以 provider 形式接入。
  *
- * 注意：个人自用；依赖 WorkBuddy 非公开客户端接口，App 大版本更新后可能失效。
+ * 注意：依赖 WorkBuddy 非公开客户端接口，App 大版本更新后可能失效。
  */
 
 import { createServer } from "node:http";

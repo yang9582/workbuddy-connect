@@ -56,7 +56,7 @@ python -m workbuddy.cli_main dsh bundle
 
 | 目录 | 职责 | 注意 |
 |---|---|---|
-| `workbuddy/` | Python 核心：进程管理、provider 同步、CLI、harness 适配器 | 不在 `register()` 里做 IO |
+| `workbuddy/` | Python 核心：进程管理、provider 生成、CLI 与 DSH 适配器 | 不在 `register()` 里做 IO |
 | `bridge/` | Node 桥接：双协议、目录/积分、system 策略 | 新逻辑优先抽到 `bridge/lib/*.mjs` 并补单测 |
 | `dsh/workbuddy-connect/` | DSH bundle：声明式 patch + Host/Client 半 | patch 改动必须能被 `dsh --dump-config` 组合 |
 | `vendor/` | 第三方内核与离线包 | 改动需同步 `THIRD_PARTY_NOTICES.txt` |
@@ -71,7 +71,7 @@ python -m workbuddy.cli_main dsh bundle
 ## PR 检查清单
 
 - [ ] `python -m unittest …` 与两组 `node --test` 全绿
-- [ ] 改了桥接行为：补了单测，并在说明里写清楚对既有 harness 的影响
+- [ ] 改了桥接行为：补了单测，并在说明里写清对 DSH 侧的影响
 - [ ] 改了 DSH patch/窗口/档位：附 `dsh --dump-config` 的验证结果
 - [ ] 没有引入新的第三方许可依赖；有的话更新 `THIRD_PARTY_NOTICES.txt`
 - [ ] README 里对应的命令/配置仍然准确

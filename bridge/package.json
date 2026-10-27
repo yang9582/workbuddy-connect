@@ -3,5 +3,5 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Expose WorkBuddy desktop-app models to Hermes Agent as an OpenAI-compatible local endpoint."
+  "description": "Local OpenAI-compatible bridge that exposes WorkBuddy desktop-app models to DeepSeek Harness (DSH)."
 }
