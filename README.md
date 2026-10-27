@@ -107,8 +107,12 @@ python -m workbuddy.cli_main dsh bundle
 
 装好后模型选择器里会出现 **WorkBuddy / WorkBuddy AI** 分组；选中其中的模型，输入框左侧会出现积分条。
 
-> ⚠️ **桥接默认不会开机自启**。重启电脑后要先跑一次 `wbconnect start`，否则模型出现在列表里但调用会失败。
-> 一条命令装上自启（在 Windows「启动」文件夹里放一个静默脚本，随时可删）：
+> 🔌 **桥接会自动启动**：打开 DSH 后 1.5 秒，插件会检查桥接；没在跑就自动执行
+> `bin/wbconnect start`（日志写到数据目录的 `autostart.log`，状态里也能看到 `bridgeAutostart`）。
+> 想关掉：设环境变量 `WORKBUDDY_NO_AUTOSTART=1`。
+>
+> 如果你连 DSH 也不想一直开着、但希望开机后桥接就在跑，可以再加一层登录自启
+> （Windows「启动」文件夹里的静默脚本，随时可删）：
 >
 > ```bash
 > wbconnect autostart install     # 或 python -m workbuddy.cli_main autostart install
@@ -322,8 +326,9 @@ tests/                单元测试（标准库 unittest，无第三方依赖）
   文本占位并在响应头标 `x-workbuddy-images: dropped`。
 - **只支持 DSH**：其它 harness 的适配器还在开发中，接口可能变，不保证可用。
 - **只测过 Windows**：路径与进程管理在 Windows 上验证；macOS / Linux 未验证。
-- **桥接需要常驻**：默认不开机自启（可 `wbconnect autostart install` 打开），重启后若没启动，
-  模型仍会列在选择器里但调用会失败（此时积分条显示 `✕`）。
+- **桥接需要常驻**：打开 DSH 时会自动尝试拉起（`WORKBUDDY_NO_AUTOSTART=1` 可关）；
+  如果自动拉起失败（例如 `python` 不在 PATH），模型仍会列在选择器里但调用失败，
+  积分条显示 `✕`，此时手动 `wbconnect start` 即可。
 - **DSH 里没有"模型显隐/窗口下拉"**：这两项依赖 DSH 插件把 provider 程序化注册，本项目为了
   避开版本耦合只做配置化 + 设置页展示。
 - **个人使用定位**：请自行确认符合 WorkBuddy 的服务条款与所在地区法规；不要用于商业转售、

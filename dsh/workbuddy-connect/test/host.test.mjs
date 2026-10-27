@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
-import { apply, dataDir, providersRegistered, readConfig, summarize } from "../index.js";
+// 测试进程绝不能真的去拉起桥接（apply 会安排一次自动启动）
+process.env.WORKBUDDY_NO_AUTOSTART = "1";
+
+import { apply, bridgeLauncher, dataDir, providersRegistered, readConfig, summarize } from "../index.js";
 
 test("dataDir honours WORKBUDDY_BRIDGE_DATA", () => {
   const previous = process.env.WORKBUDDY_BRIDGE_DATA;
@@ -165,4 +171,20 @@ test("单条路由注册失败不能拖垮整个 Host 半", () => {
     routes.map((route) => route.path).sort(),
     ["/workbuddy/client-beacon", "/workbuddy/status"],
   );
+});
+
+test("bridgeLauncher 只在仓库存在 bin/ 启动器时返回路径", () => {
+  const root = mkdtempSync(join(tmpdir(), "wb-launcher-"));
+  assert.equal(bridgeLauncher(root, "win32"), null, "没有 bin/ 时必须返回 null");
+
+  mkdirSync(join(root, "bin"));
+  writeFileSync(join(root, "bin", "wbconnect.cmd"), "@echo off\n");
+  assert.equal(bridgeLauncher(root, "win32"), join(root, "bin", "wbconnect.cmd"));
+  assert.equal(bridgeLauncher(root, "linux"), null, "POSIX 找的是没有扩展名的脚本");
+});
+
+test("bridgeLauncher 默认指向本仓库的启动器", () => {
+  const launcher = bridgeLauncher();
+  assert.ok(launcher, "仓库里应当能找到 bin/wbconnect(.cmd)");
+  assert.match(launcher, /bin[\\/]wbconnect(\.cmd)?$/, launcher);
 });

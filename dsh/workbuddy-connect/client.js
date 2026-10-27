@@ -120,6 +120,12 @@ window.__ModuleLoader__.load({
           store.data = await response.json();
           store.error = '';
           retryBudget = 2;
+          // 桥接可能刚被 Host 半自动拉起：两个变体都读不到时，强制刷新一次等它起来
+          const variants = Array.isArray(store.data.variants) ? store.data.variants : [];
+          if (variants.length > 0 && variants.every((variant) => variant.ok !== true) && retryBudget > 0) {
+            retryBudget -= 1;
+            setTimeout(() => { void refresh(true); }, 4000);
+          }
           // 成功后回报一次，便于从 Host 侧确认"数据链路真的通了"
           try {
             postBeacon(null, { data: { variants: Array.isArray(store.data.variants) ? store.data.variants.length : 0 } });
@@ -497,7 +503,7 @@ window.__ModuleLoader__.load({
     }
 
     // ─────────────────────────── 装配 ───────────────────────────
-    const BUILD = '2.1.0+always-fetch';
+    const BUILD = '2.1.0+autostart';
     let activeLocale = 'en';
 
     function registerLocale(ctx) {
