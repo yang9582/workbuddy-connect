@@ -89,7 +89,7 @@ DeepSeek Harness（插件：模型分组 + 积分条 + 菜单倍率）
 ### 四步
 
 ```bash
-git clone <your-repo-url> workbuddy-connect
+git clone https://github.com/yang9582/workbuddy-connect.git workbuddy-connect
 cd workbuddy-connect
 
 # 1) 启动本地桥接（国内版 39621 / 国际版 39622，按需启动）
