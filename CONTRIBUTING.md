@@ -68,6 +68,13 @@ python -m workbuddy.cli_main dsh bundle
 - **不要提交**个人路径、真实令牌、对话转储、`%LOCALAPPDATA%` 下的运行时文件，
   以及 `dsh/workbuddy-connect/cordis.patch.yml`（按账号生成的产物，已被 `.gitignore` 排除）。
 
+## 发布
+
+- Release 说明只记录**功能性变更**（新增、修复、行为变化），逐条写清影响面。
+- 文档、措辞、元数据等非功能性修改不单列条目；这类版本写一句
+  「文档修订版本，无功能变化。」即可。
+- 版本号：功能性变更按语义化版本升级；纯文档修订升 patch。
+
 ## PR 检查清单
 
 - [ ] `python -m unittest …` 与两组 `node --test` 全绿
