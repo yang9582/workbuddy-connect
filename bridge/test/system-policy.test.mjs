@@ -21,9 +21,11 @@ const policy = (overrides = {}) => ({
   ...overrides,
 });
 
-test("resolveSystemPolicy: 国内版 chat 默认 defang，国际版默认 pass", () => {
+test("resolveSystemPolicy: 两个变体的 chat 面默认都走 defang", () => {
   assert.equal(resolveSystemPolicy({}, "workbuddy", "chat").mode, "defang");
-  assert.equal(resolveSystemPolicy({}, "workbuddy-ai", "chat").mode, "pass");
+  assert.equal(resolveSystemPolicy({}, "workbuddy-ai", "chat").mode, "defang");
+  // 显式 pass 仍然可以关掉保护
+  assert.equal(resolveSystemPolicy({ systemPolicy: "pass" }, "workbuddy-ai", "chat").mode, "pass");
 });
 
 test("resolveSystemPolicy: Anthropic 面默认沿用 neutral（旧的 replace 语义）", () => {

@@ -539,8 +539,21 @@ async function chatCompletions(req, res) {
   const controller = new AbortController();
   req.on("close", () => controller.abort());
 
-  const result = await chatStreamWithRetry(credential, prepared, controller.signal);
+  let result = await chatStreamWithRetry(credential, prepared, controller.signal);
+  // 11128 是上游的渠道指纹校验。defang 之后仍被拦时，用中性 system 再试一次：
+  // 宁可丢掉 system 指令，也不要让整轮对话失败。
+  if (!result.ok && String(result.message ?? "").includes("11128") && chatPolicy.mode !== "neutral") {
+    log(`11128 persisted (model=${requestModel} policy=${chatPolicy.mode}); retrying with neutral system prompt`);
+    const neutral = applyChatBody(
+      prepareChatBody(raw),
+      { ...chatPolicy, mode: "neutral", neutralMinLength: 0 },
+    );
+    result = await chatStreamWithRetry(credential, neutral, controller.signal, 1);
+  }
   if (!result.ok) {
+    if (String(result.message ?? "").includes("11128")) {
+      log(`11128 blocked after fallback (model=${requestModel} policy=${chatPolicy.mode})`);
+    }
     const status = UPSTREAM_ERROR_STATUS[result.kind] ?? 502;
     const detail = String(result.message ?? "").slice(0, 400);
     writeOpenAIError(res, status, result.kind, `workbuddy upstream ${result.kind} (http ${result.status}): ${detail}`);

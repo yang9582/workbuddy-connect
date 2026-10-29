@@ -12,9 +12,8 @@
  *   mode = "defang"  替换已知被拦句 + 代码块之外的双空格展开（字节序列改变，语义不变）
  *   mode = "neutral" 整段替换为中性提示词（仅在超过 neutralMinLength 时，避免破坏短提示词）
  *
- * 默认值按"最不坏"选取：
- *   - OpenAI 路径：国内版 defang，国际版 pass；
- *   - Anthropic 路径：neutral（沿用 Claude Code 的既有默认，避免回归）。
+ * 默认值：OpenAI 与 Anthropic 两个协议面都启用保护策略（defang / neutral），
+ * 只有显式配置 `systemPolicy: "pass"` 才原样转发。
  * 显式配置 `systemPolicy` 对所有路径生效；`anthropicSystemMode` 是旧键，仍然优先于前者。
  */
 import { sanitizeSystemText } from "./system-text.mjs";
@@ -54,7 +53,7 @@ export function resolveSystemPolicy(config = {}, variantId = "workbuddy", surfac
   } else if (surface === "anthropic") {
     mode = "neutral";
   } else {
-    mode = variantId === "workbuddy-ai" ? "pass" : "defang";
+    mode = "defang";
   }
 
   return {
